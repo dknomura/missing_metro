@@ -1,0 +1,12 @@
+# Python Environment Rule
+- Python environment is managed by uv
+- NEVER run system `python` or `python3` commands directly
+- ALWAYS use `uv run python` to execute scripts and test code
+- ALWAYS use `uv run` for script execution and testing
+- Package management must use `uv add` instead of `pip install`
+- Use `uv pip list` or `uv run pip list` to view installed packages 
+- The virtual environment is located at ./venv/
+
+# Windows Environment Rules
+- Most dev is done in Windows environment
+- WSL is available for any linux commands that need to be run
