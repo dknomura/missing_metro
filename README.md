@@ -20,10 +20,7 @@ marimo edit --watch
 ### Running Tests
 
 ```bash
-# Run testing in your regular python files
 uv run pytest tests
-# Running testing in your marimo notebooks
-uv run pytest notebooks
 ```
 
 ### Linting and formatting
