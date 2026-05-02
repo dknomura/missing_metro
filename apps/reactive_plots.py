@@ -76,12 +76,14 @@ def __(alt, data):
 def __():
     import altair as alt
     from vega_datasets import data
+
     return alt, data
 
 
 @app.cell
 def __():
     import marimo as mo
+
     return (mo,)
 
 

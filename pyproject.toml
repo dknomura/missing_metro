@@ -28,8 +28,14 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = [
-  "E", # pycodestyle
-  "F", # pyflakes
-  "I", # isort
-  "B", # flake8-bugbear
+    "E", # pycodestyle
+    "F", # pyflakes
+    "I", # isort
+    "B", # flake8-bugbear
+    "W",    # Pycodestyle (warnings)
+    "UP",   # pyupgrade (modern Python syntax)
+]
+
+ignore = [
+    "B018", # Found useless expression (sometimes used for output in notebooks)
 ]

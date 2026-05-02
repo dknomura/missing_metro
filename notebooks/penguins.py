@@ -13,12 +13,13 @@ __generated_with = "0.13.5"
 app = marimo.App(width="medium")
 
 with app.setup:
-    import marimo as mo
-    import polars as pl
     import altair as alt
+    import marimo as mo
     import pandas as pd
+    import polars as pl
 
     file = mo.notebook_location() / "public" / "penguins.csv"
+
 
 @app.cell(hide_code=True)
 def _():
@@ -39,11 +40,13 @@ def _():
     df.head()
     return (df,)
 
+
 @app.cell
 def _():
     # Try to avoid reading the file with pandas
     _df = pd.read_csv(str(file))
     return
+
 
 @app.cell
 def _(df):
@@ -52,7 +55,7 @@ def _(df):
     ### Dataset Overview
 
     - Total records: {df.height}
-    - Columns: {', '.join(df.columns)}
+    - Columns: {", ".join(df.columns)}
 
     ### Summary Statistics
 
