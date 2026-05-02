@@ -1,22 +1,38 @@
-# marimo WebAssembly + GitHub Pages Template
+# Missing Metro Marimo
+## Development
 
-This template repository demonstrates how to export [marimo](https://marimo.io) notebooks to WebAssembly and deploy them to GitHub Pages.
+Using uv, install instructions [in repo](https://github.com/astral-sh/uv)
 
-## 📚 Included Examples
+### Setup
 
-- `apps/charts.py`: Interactive data visualization with Altair
-- `notebooks/fibonacci.py`: Interactive Fibonacci sequence calculator
-- `notebooks/penguins.py`: Interactive data analysis with Polars and marimo
+```bash
+# Install dependencies
+uv sync
+```
 
-## 🚀 Usage
+### Editing notebook
+The marimo VSCode extension is buggy, so open the notebook in watch mode to edit in VSCode and run the notebook in the browser.
 
-1. Fork this repository
-2. Add your marimo files to the `notebooks/` or `apps/` directory
-   1. `notebooks/` notebooks are exported with `--mode edit`
-   2. `apps/` notebooks are exported with `--mode run`
-3. Push to main branch
-4. Go to repository **Settings > Pages** and change the "Source" dropdown to "GitHub Actions"
-5. GitHub Actions will automatically build and deploy to Pages
+```bash
+marimo edit --watch
+```
+
+### Running Tests
+
+```bash
+# Run testing in your regular python files
+uv run pytest tests
+# Running testing in your marimo notebooks
+uv run pytest notebooks
+```
+
+### Linting and formatting
+
+```bash
+uv run ruff check .
+uv run ruff format .
+```
+
 
 ## Including data or assets
 
@@ -51,7 +67,7 @@ uv run .github/scripts/build.py --template templates/tailwind.html.j2
 
 You can also create your own custom templates. See the [templates/README.md](templates/README.md) for more information.
 
-## 🧪 Testing
+## Local build/deploy
 
 To test the export process, run `.github/scripts/build.py` from the root directory.
 
@@ -66,3 +82,4 @@ python -m http.server -d _site
 ```
 
 This will serve the site at `http://localhost:8000`.
+

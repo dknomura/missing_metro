@@ -1,13 +1,16 @@
 # This workflow builds and deploys marimo notebooks to GitHub Pages
-# It runs automatically when changes are pushed to the main branch or can be triggered manually
+# It runs automatically after CI passes on the main branch or can be triggered manually
 
 name: Deploy to GitHub Pages
 
 # Defines when the workflow will run
 on:
-  push:
-    branches: ['main']  # Trigger on pushes to main branch
-  workflow_dispatch:    # Allow manual triggering from the GitHub UI
+  workflow_run:
+    workflows: ['CI']          # Only run after the CI workflow completes
+    branches: ['main']         # Only on the main branch
+    types:
+      - completed              # Trigger when CI completes (success or failure)
+  workflow_dispatch:           # Allow manual triggering from the GitHub UI
 
 # Concurrency settings to manage multiple workflow runs
 concurrency:
@@ -21,6 +24,8 @@ env:
 jobs:
   # The build job exports marimo notebooks to static HTML/WebAssembly
   build:
+    # Only run if the triggering CI workflow completed successfully
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest  # Use the latest Ubuntu runner
     steps:
       # Check out the repository code

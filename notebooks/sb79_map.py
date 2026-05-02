@@ -18,23 +18,16 @@ with app.setup:
     import marimo as mo
     import geopandas as gpd
     import folium
-    import arcgis
-    import json
-    from collections import defaultdict
     import pandas as pd
     from folium.plugins import MarkerCluster
     STOPS_LAYER_ID = "d6fc47eca97e48b7890c8fb7c9b69688"
+    STOPS_URL = r"https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stops/FeatureServer/0/query?where=0%3D0&objectIds=&geometry=&geometryType=esriGeometryEnvelope&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance=0.0&units=esriSRUnit_Meter&outDistance=&relationParam=&returnGeodetic=false&outFields=*&returnHiddenFields=false&returnGeometry=true&featureEncoding=esriDefault&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&defaultSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&cacheHint=false&collation=&orderByFields=&groupByFieldsForStatistics=&returnAggIds=false&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnTrueCurves=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pgeojson"
 
 
 @app.cell
 def _():
-    arc_api = arcgis.GIS()
-    stops = arc_api.content.get(STOPS_LAYER_ID).layers[0].query()
-    # Use from_features with GeoJSON instead of .sdf to avoid arcgis pandas import issues in sandbox
-    stops_df = gpd.GeoDataFrame.from_features(features=json.loads(stops.to_geojson))
-    stops_df = stops_df.set_crs("EPSG:3857")
-    stops_df = stops_df.to_crs("EPSG:4326")
-    stops_df
+    stops_df = gpd.read_file(STOPS_URL, driver='GeoJSON')
+    stops_df.crs
     return (stops_df,)
 
 
