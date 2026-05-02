@@ -27,4 +27,4 @@ jobs:
         run: uv run ruff check .
 
       - name: Run tests
-        run: uv run pytest tests src
+        run: uv run pytest tests
