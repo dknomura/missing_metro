@@ -1,11 +1,10 @@
 # /// script
-# requires-python = ">=3.12"
+# requires-python = ">=3.13"
 # dependencies = [
-#     "arcgis>=2.4.3",
+#     "auto-mix-prep>=0.2.0",
 #     "folium>=0.20.0",
 #     "geopandas>=1.1.3",
 #     "marimo>=0.23.3",
-#     "pandas>=3.0.2",
 # ]
 # ///
 
@@ -14,30 +13,49 @@ import marimo
 __generated_with = "0.23.4"
 app = marimo.App()
 
-with app.setup:
-    import folium
-    import geopandas as gpd
-    from folium.plugins import MarkerCluster
-
-    STOPS_LAYER_ID = "d6fc47eca97e48b7890c8fb7c9b69688"
-    STOPS_URL = r"https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stops/FeatureServer/0/query?where=0%3D0&objectIds=&geometry=&geometryType=esriGeometryEnvelope&inSR=&spatialRel=esriSpatialRelIntersects&resultType=none&distance=0.0&units=esriSRUnit_Meter&outDistance=&relationParam=&returnGeodetic=false&outFields=*&returnHiddenFields=false&returnGeometry=true&featureEncoding=esriDefault&multipatchOption=xyFootprint&maxAllowableOffset=&geometryPrecision=&outSR=&defaultSR=&datumTransformation=&applyVCSProjection=false&returnIdsOnly=false&returnUniqueIdsOnly=false&returnCountOnly=false&returnExtentOnly=false&returnQueryGeometry=false&returnDistinctValues=false&cacheHint=false&collation=&orderByFields=&groupByFieldsForStatistics=&returnAggIds=false&outStatistics=&having=&resultOffset=&resultRecordCount=&returnZ=false&returnM=false&returnTrueCurves=false&returnExceededLimitFeatures=true&quantizationParameters=&sqlFormat=none&f=pgeojson"
-
 
 @app.cell
 def _():
-    stops_df = gpd.read_file(STOPS_URL, driver="GeoJSON")
-    stops_df.crs
-    return (stops_df,)
+    import folium
+    import marimo as mo
+    from folium.plugins import MarkerCluster, VectorGridProtobuf
+
+    from arcgis_paginate import (
+        fetch_from_arcgis,
+    )
+
+    PARCELS_URL = "https://vectortileservices3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/VectorTileServer/tile/{z}/{y}/{x}.pbf"
+    STOPS_URL = (
+        "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stations/FeatureServer/0/query"
+    )
+
+    # https://vectortileservices3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/VectorTileServer/tile/12/704/1634.pbf
+
+    # https://vectortileservices3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/VectorTileServer/tile/7/49/21.pbf
+    return (
+        MarkerCluster,
+        PARCELS_URL,
+        STOPS_URL,
+        VectorGridProtobuf,
+        fetch_from_arcgis,
+        folium,
+        mo,
+    )
 
 
 @app.cell
-def _(stops_df):
-    m = folium.Map(
-        location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=10
-    )
+def _(STOPS_URL, fetch_from_arcgis):
+    stops = fetch_from_arcgis(url=STOPS_URL)
+    stops
+    return (stops,)
+
+
+@app.cell
+def _(MarkerCluster, folium, stops):
+    m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=10)
 
     cluster = MarkerCluster(disable_clustering_at_zoom=10).add_to(m)
-    for _, _row in stops_df.iterrows():
+    for _, _row in stops.iterrows():
         color = "blue" if _row["Tier"] == 2 else "red"
         cluster.add_child(
             folium.CircleMarker(
@@ -57,7 +75,51 @@ def _(stops_df):
             ).add_to(m)
         )
     m
+    return (m,)
+
+
+@app.cell
+def _(PARCELS_URL, VectorGridProtobuf, m):
+    VectorGridProtobuf(PARCELS_URL, "folium_layer_name").add_to(m)
+    m
     return
+
+
+@app.cell
+def _(m, mo):
+    map_widget = mo.ui.map(m)
+    map_widget
+    return (map_widget,)
+
+
+@app.cell
+def _(map_widget):
+    import requests
+    from marimo import mo
+
+    # This will run every time the map is clicked
+    if map_widget.value:
+        lat, lon = map_widget.value["lat"], map_widget.value["lon"]
+
+        # Use the FeatureServer's /query endpoint (assuming geometryType=esriGeometryPoint)
+        query_url = (
+            "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/FeatureServer/0/query"
+        )
+        params = {
+            "geometry": f"{lon},{lat}",
+            "geometryType": "esriGeometryPoint",
+            "spatialRel": "esriSpatialRelIntersects",
+            "outFields": "*",  # get all attributes
+            "returnGeometry": "false",  # we only need attributes
+            "f": "geojson",
+        }
+        resp = requests.get(query_url, params=params)
+        if resp.ok and resp.json()["features"]:
+            parcel = resp.json()["features"][0]["properties"]
+            mo.md(f"**Parcel info:**\n```json\n{parcel}\n```")
+        else:
+            mo.md("No parcel found at that point.")
+    return (mo,)
 
 
 if __name__ == "__main__":

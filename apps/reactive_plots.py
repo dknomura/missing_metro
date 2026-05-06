@@ -36,14 +36,10 @@ def __(chart, mo):
 def __(alt, filtered_data, mo):
     mo.stop(not len(filtered_data.value))
     mpg_hist = mo.ui.altair_chart(
-        alt.Chart(filtered_data.value)
-        .mark_bar()
-        .encode(alt.X("Miles_per_Gallon:Q", bin=True), y="count()")
+        alt.Chart(filtered_data.value).mark_bar().encode(alt.X("Miles_per_Gallon:Q", bin=True), y="count()")
     )
     horsepower_hist = mo.ui.altair_chart(
-        alt.Chart(filtered_data.value)
-        .mark_bar()
-        .encode(alt.X("Horsepower:Q", bin=True), y="count()")
+        alt.Chart(filtered_data.value).mark_bar().encode(alt.X("Horsepower:Q", bin=True), y="count()")
     )
     mo.hstack([mpg_hist, horsepower_hist], justify="space-around", widths="equal")
     return horsepower_hist, mpg_hist
@@ -63,12 +59,7 @@ def __(alt, data):
         )
         .add_params(brush)
     )
-    bars = (
-        alt.Chart(cars)
-        .mark_bar()
-        .encode(y="Origin:N", color="Origin:N", x="count(Origin):Q")
-        .transform_filter(brush)
-    )
+    bars = alt.Chart(cars).mark_bar().encode(y="Origin:N", color="Origin:N", x="count(Origin):Q").transform_filter(brush)
     return bars, brush, cars, scatter
 
 

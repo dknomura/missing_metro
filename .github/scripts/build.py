@@ -177,9 +177,7 @@ def _export(folder: Path, output_dir: Path, as_app: bool = False) -> list[dict]:
         if _export_html_wasm(nb, output_dir, as_app=as_app)
     ]
 
-    logger.info(
-        f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}"
-    )
+    logger.info(f"Successfully exported {len(notebook_data)} out of {len(notebooks)} files from {folder}")
     return notebook_data
 
 
