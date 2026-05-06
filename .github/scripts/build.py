@@ -20,6 +20,7 @@ The exported files will be placed in the specified output directory (default: _s
 # ]
 # ///
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -48,8 +49,7 @@ def _export_html_wasm(notebook_path: Path, output_dir: Path, as_app: bool = Fals
     output_path: Path = notebook_path.with_suffix(".html")
 
     # Base command for marimo export
-    cmd: list[str] = ["uvx", "marimo", "export", "html-wasm", "--sandbox"]
-
+    cmd: list[str] = ["uv", "run", "marimo", "export", "html-wasm", "--sandbox"]
     # Configure export mode based on whether it's an app or a notebook
     if as_app:
         logger.info(f"Exporting {notebook_path} to {output_path} as app")
@@ -68,7 +68,11 @@ def _export_html_wasm(notebook_path: Path, output_dir: Path, as_app: bool = Fals
 
         # Run marimo export command
         logger.debug(f"Running command: {cmd}")
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(Path("src").resolve())
+
+        subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
+
         logger.info(f"Successfully exported {notebook_path}")
         return True
     except subprocess.CalledProcessError as e:
