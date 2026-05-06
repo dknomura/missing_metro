@@ -11,15 +11,6 @@ The script can be run from the command line with optional arguments:
 The exported files will be placed in the specified output directory (default: _site).
 """
 
-# /// script
-# requires-python = ">=3.12"
-# dependencies = [
-#     "jinja2==3.1.3",
-#     "fire==0.7.0",
-#     "loguru==0.7.0"
-# ]
-# ///
-
 import os
 import subprocess
 from pathlib import Path
