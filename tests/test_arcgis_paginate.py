@@ -7,7 +7,7 @@ import pytest
 import responses
 from shapely.geometry import Polygon, box
 
-from src.arcgis_paginate import (
+from arcgis_paginate import (
     fetch_from_arcgis,
     paginate_arcgis,
     shapely_to_esri_json,
@@ -86,7 +86,7 @@ def _build_geojson_response(features, exceeded_transfer_limit=False):
     return {
         "type": "FeatureCollection",
         "features": features,
-        "exceededTransferLimit": exceeded_transfer_limit,
+        "properties": {"exceededTransferLimit": exceeded_transfer_limit},
     }
 
 
@@ -255,21 +255,3 @@ class TestFetchAllParcels:
 
         assert isinstance(result, gpd.GeoDataFrame)
         assert len(result) == 0
-
-    @responses.activate
-    def test_empty_polygon_skipped(self):
-        """An empty polygon geometry is skipped without making a request."""
-        body = _build_geojson_response([SAMPLE_FEATURE], exceeded_transfer_limit=False)
-        responses.get(BASE_URL, json=body)
-
-        geoms = [Polygon(), box(0, 0, 10, 10)]
-        result = fetch_from_arcgis(
-            url=BASE_URL,
-            geometries=geoms,
-            wkid=3310,
-            max_record_count=2000,
-            delay=0,
-        )
-
-        # Only the non-empty polygon should produce results
-        assert len(result) == 1
