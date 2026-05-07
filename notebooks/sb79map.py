@@ -58,6 +58,7 @@ with app.setup(hide_code=True):
         ("half_mi", 1): 100,
         ("half_mi", 2): 80,
     }
+    print("https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip")
 
     def shapely_to_esri_json(polygon: Polygon, wkid: int = 3857) -> dict | None:
         """Convert a Shapely polygon to an ESRI JSON geometry object."""
@@ -892,7 +893,6 @@ def _():
     STOPS_URL = (
         "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stations/FeatureServer/0/query"
     )
-    print("https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip")
     return (
         MarkerCluster,
         Optional,
@@ -920,6 +920,12 @@ def _(mo):
 
     mo.hstack([file_input, url_input], justify="start")
     return file_input, url_input
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.stop(True, mo.md("**Upload GTFS to continue.**"))
+    return
 
 
 @app.cell(hide_code=True)
