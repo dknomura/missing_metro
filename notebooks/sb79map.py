@@ -333,6 +333,9 @@ with app.setup(hide_code=True):
         )
         if parcels.empty:
             return parcels
+        if "APN20" in parcels.columns:
+            parcels = parcels.groupby("APN20", as_index=False).first()
+
         return parcels.set_crs("EPSG:4326").to_crs(f"EPSG:{wkid}")
 
     def fetch_ca_parcels(
@@ -359,9 +362,8 @@ with app.setup(hide_code=True):
 
         # Deduplicate by APN
         if "PARCEL_APN" in parcels.columns:
-            before = len(parcels)
+            before = len(parcels)  # noqa: F841
             parcels = parcels.groupby("PARCEL_APN", as_index=False).first()
-            print(f"CA parcels: {before} → {len(parcels)} after APN dedup")
         return parcels.set_crs("EPSG:4326").to_crs(f"EPSG:{wkid}")
 
     def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -530,14 +532,14 @@ with app.setup(hide_code=True):
         3. Concat all three zones.
         4. Assign zone density by ``(buffer_zone_id, Tier)``.
         5. Group by ``APN20`` → weighted ``new_density_du_per_ac``,
-        ``dwelling_units_new``, ``dwelling_units_current``.
+        ``new_dwelling_units``, ``current_dwelling_units``.
 
         Returns
         -------
         gpd.GeoDataFrame
             One row per APN20 with columns: ``APN20``, ``geometry``, ``area_acres``,
-            ``new_density_du_per_ac``, ``dwelling_units_new``,
-            ``dwelling_units_current``, ``current_density_du_per_ac``, ``Tier``,
+            ``new_density_du_per_ac``, ``new_dwelling_units``,
+            ``current_dwelling_units``, ``current_density_du_per_ac``, ``Tier``,
             ``ZN19_CITY``, ``ZN19_SCAG``, ``COUNTY``, ``CITY``.
         """
         # --- 1. Trim for each buffer distance ---
@@ -583,7 +585,6 @@ with app.setup(hide_code=True):
         # Weighted density: sum(area_sqft * zone_density) / total_area
         residential["area_x_density"] = residential["area_sqft"] * residential["zone_density"]
         weighted_sum = residential.groupby("APN20")["area_x_density"].sum()
-        weighted_density = np.where(area_agg > 0, weighted_sum / area_agg, 0.0)
 
         # Union geometry per APN
         geom_agg = residential.groupby("APN20")["geometry"].agg(unary_union)
@@ -600,6 +601,9 @@ with app.setup(hide_code=True):
                 "buffer_zone_id",
             ]
         ]
+        weighted_density = np.where(
+            (area_agg > 0) & (first_agg["current_density_du_per_ac"].notna()), weighted_sum / area_agg, np.nan
+        )
 
         # Build result
         by_apn = gpd.GeoDataFrame(
@@ -608,8 +612,8 @@ with app.setup(hide_code=True):
                 "geometry": geom_agg.values,
                 "area_acres": area_acres.values,
                 "new_density_du_per_ac": weighted_density,
-                "dwelling_units_new": weighted_density * area_acres.values,
-                "dwelling_units_current": first_agg["current_density_du_per_ac"].fillna(0).values * area_acres.values,
+                "new_dwelling_units": weighted_density * area_acres.values,
+                "current_dwelling_units": first_agg["current_density_du_per_ac"].values * area_acres.values,
                 "current_density_du_per_ac": first_agg["current_density_du_per_ac"].values,
                 "Tier": first_agg["Tier"].values,
                 "ZN19_CITY": first_agg["ZN19_CITY"].values,
@@ -621,10 +625,10 @@ with app.setup(hide_code=True):
             geometry="geometry",
             crs=residential.crs,
         )
-
-        print(f"Before APN dedup: {len(residential)} rows")
-        print(f"After APN dedup:  {len(by_apn)} rows")
-        print(f"Total dwelling units (new): {by_apn['dwelling_units_new'].sum():.0f}")
+        by_apn["additional_du"] = np.maximum(
+            0,
+            by_apn.get("new_dwelling_units", 0) - by_apn.get("current_dwelling_units", 0),
+        )
         return by_apn
 
     def join_scag_ca_parcels(
@@ -641,6 +645,10 @@ with app.setup(hide_code=True):
             "APN20",
             "ZN19_CITY",
             "ZN19_SCAG",
+            "new_dwelling_units",
+            "current_dwelling_units",
+            "new_density_du_per_ac",
+            "current_density_du_per_ac",
             "area_acres",
             "CITY",
             "COUNTY",
@@ -684,7 +692,7 @@ with app.setup(hide_code=True):
         stops_gdf: gpd.GeoDataFrame,
         buffers_gdf: gpd.GeoDataFrame,
     ) -> gpd.GeoDataFrame:
-        """Spatially join parcels to stop buffers, then deduplicate multi-buffer parcels
+        """Spatially join parcels to stop buffers, then deduplicate multi‑buffer parcels
         by assigning the nearest stop (by centroid distance).
 
         Parcels are clipped to their assigned buffer so only the intersecting
@@ -693,7 +701,7 @@ with app.setup(hide_code=True):
         Returns
         -------
         gpd.GeoDataFrame
-            One row per ``(stop_id, APN)`` with a ``clipped_geom`` column.
+            One row per ``(stop_id, APN)`` with ``clipped_geom`` as the active geometry.
         """
         # Reproject once
         parcels_3310 = parcels_gdf.to_crs("EPSG:3310")
@@ -715,29 +723,20 @@ with app.setup(hide_code=True):
         deduped = joined[~joined.index.duplicated(keep="first")].copy()
 
         if len(multi_ids) > 0:
-            # ---- VECTORIZED nearest-stop assignment ----
-            # Filter to multi-stop parcels only
+            # Vectorized nearest‑stop assignment
             multi_rows = joined.loc[multi_ids].copy()
-
-            # Get centroids for these parcels (aligned with multi_rows by index)
             centroids_3310 = parcels_3310.loc[multi_ids].geometry.centroid
-
-            # Get stop points (indexed by stop_id)
             stops_3310 = stops_gdf.set_index("stop_id").to_crs("EPSG:3310").geometry
 
-            # Compute distances: for each row, distance from parcel centroid to its stop
-            # Vectorized: pass arrays of (centroids, stop_points)
             stop_points_for_rows = stops_3310.loc[multi_rows["stop_id"]].values
             centroid_array = centroids_3310.loc[multi_rows.index].values
 
-            # Shapely distance (vectorized over arrays)
             multi_rows["distance"] = shapely.distance(centroid_array, stop_points_for_rows)
 
-            # For each original parcel index, pick the stop with minimum distance
             nearest_idx = multi_rows.groupby(multi_rows.index)["distance"].idxmin()
             nearest = multi_rows.loc[nearest_idx, ["stop_id"]]
 
-            # Assign back to deduped
+            # Assign the nearest stop back
             deduped.loc[nearest.index, "stop_id"] = nearest["stop_id"]
 
         # Clip parcels to assigned buffer
@@ -745,10 +744,14 @@ with app.setup(hide_code=True):
         deduped["buffer_geom"] = deduped["stop_id"].map(buffer_indexed["geometry"])
         deduped["clipped_geom"] = deduped.geometry.intersection(deduped["buffer_geom"])
 
-        # Deduplicate by (stop_id, APN)
+        # Ensure exactly one row per (stop_id, APN)
         apn_col = "PARCEL_APN" if "PARCEL_APN" in deduped.columns else "APN20"
-        deduped = deduped.groupby(["stop_id", apn_col], as_index=False).first()
-        deduped = deduped.set_crs("EPSG:3310")
+        deduped = deduped.drop_duplicates(subset=["stop_id", apn_col], keep="first")
+
+        # Set active geometry to clipped_geom and drop other geometry columns
+        deduped = deduped.set_geometry("clipped_geom", crs="EPSG:3310")
+        deduped = deduped.drop(columns=["geometry", "buffer_geom"], errors="ignore")
+
         return deduped
 
     def aggregate_parcels_to_stops(
@@ -760,8 +763,8 @@ with app.setup(hide_code=True):
         For each stop:
         * ``parcel_acres`` — total clipped parcel area (using ``unary_union`` to
         avoid double-counting overlapping geometries).
-        * ``additional_dwelling_units`` — sum of ``max(0, dwelling_units_new -
-        dwelling_units_current)`` across parcels where new > current.
+        * ``additional_dwelling_units`` — sum of ``max(0, new_dwelling_units -
+        current_dwelling_units)`` across parcels where new > current.
         * ``city``, ``county`` — mode (most common value) from associated parcels.
 
         Returns
@@ -779,10 +782,6 @@ with app.setup(hide_code=True):
         area_per_stop.columns = ["stop_id", "parcel_acres"]
 
         # Additional dwelling units per stop (only where new > current)
-        parcels_with_stops["additional_du"] = np.maximum(
-            0,
-            parcels_with_stops.get("dwelling_units_new", 0) - parcels_with_stops.get("dwelling_units_current", 0),
-        )
         du_per_stop = (
             parcels_with_stops.groupby("stop_id")["additional_du"]
             .sum()
@@ -795,10 +794,10 @@ with app.setup(hide_code=True):
             return series.mode().iloc[0] if not series.mode().empty else ""
 
         city_per_stop = (
-            parcels_with_stops.groupby("stop_id")["city"].agg(_mode).reset_index().rename(columns={"city": "city"})
+            parcels_with_stops.groupby("stop_id")["CITY"].agg(_mode).reset_index().rename(columns={"CITY": "city"})
         )
         county_per_stop = (
-            parcels_with_stops.groupby("stop_id")["county"].agg(_mode).reset_index().rename(columns={"county": "county"})
+            parcels_with_stops.groupby("stop_id")["COUNTY"].agg(_mode).reset_index().rename(columns={"COUNTY": "county"})
         )
 
         # Merge back to stops
@@ -881,7 +880,7 @@ with app.setup(hide_code=True):
         return result
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     from typing import Optional
 
@@ -904,43 +903,7 @@ def _():
     )
 
 
-@app.cell
-def _(STOPS_URL):
-    stops = fetch_from_arcgis(url=STOPS_URL)
-    stops
-    return (stops,)
-
-
-@app.cell
-def _(MarkerCluster, PARCELS_URL, VectorGridProtobuf, folium, stops):
-    m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=10)
-
-    VectorGridProtobuf(PARCELS_URL, "folium_layer_name").add_to(m)
-    cluster = MarkerCluster(disable_clustering_at_zoom=10).add_to(m)
-    for _, _row in stops.iterrows():
-        color = "blue" if _row["Tier"] == 2 else "red"
-        cluster.add_child(
-            folium.CircleMarker(
-                location=[_row.geometry.y, _row.geometry.x],
-                radius=5,
-                tooltip=folium.Tooltip(
-                    f"""
-                    Stop Name: {_row["stop_name"]}<br>
-                    Tier: {_row["Tier"]}<br>
-                    Routes: {_row["route_ids_served"]}<br>
-                    City: {_row["city"]}<br>
-                    County: {_row["county"]}<br>
-                    Route type: {_row["routetypes"]}"""
-                ),
-                color=color,
-                fill_color=color,
-            ).add_to(m)
-        )
-    m
-    return
-
-
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
 
     file_input = mo.ui.file(
@@ -958,9 +921,11 @@ def _(mo):
     return file_input, url_input
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(Optional, file_input, url_input):
     # --- React to user input ---
+    print("Getting GTFS zip file from github")
+
     def get_gtfs_bytes() -> Optional[bytes]:
         """Return GTFS bytes from whichever input the user used."""
         if file_input.value:
@@ -982,12 +947,36 @@ def _(Optional, file_input, url_input):
         tmp.write(gtfs_data)
         tmp.flush()  # Ensure data is written to disk
 
-        print(f"File created at: {tmp.name}")
-
         # Optional: Read back from the start
         new_stops = parse_gtfs_zip(tmp.name, tier_overrides={"route-mourbghe-3": 2})
-    new_stops.explore(tiles="CartoDB positron")
     return (new_stops,)
+
+
+@app.cell
+def _(new_stops, prestops_gdf):
+    # Creating GIS from GTFS and assigning a Tier
+    # Tier 1: All subways and light rail or regional trains with more than 72 trains/day
+    # Tier 2: All light rail < 72 trains/day or regional trains > 48 trains/day
+    # All other transit stops are not covered by SB-79
+    # OC street car stops are Tier 2
+    def assign_tier_to_stops():
+        Tier_1 = prestops_gdf[
+            ((prestops_gdf["routetypes"].str.contains("2")) & (prestops_gdf["n_arrivals"] >= 72))
+            | (prestops_gdf["routetypes"].str.contains("1"))
+        ]
+        Tier_2 = prestops_gdf[
+            (
+                (prestops_gdf["routetypes"].str.contains("2"))
+                & ((prestops_gdf["n_arrivals"] < 72) & (prestops_gdf["n_arrivals"] >= 48))
+            )
+            | (prestops_gdf["routetypes"].str.contains("0"))
+        ]
+        Tier_1["Tier"] = 1
+        Tier_2["Tier"] = 2
+        stops_df = pd.concat([Tier_1, Tier_2])  # noqa: F841
+
+    new_stops.explore("Tier", tiles="CartoDB positron")
+    return
 
 
 @app.cell
@@ -997,86 +986,150 @@ def _(new_stops):
     return (buffers,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(buffers):
-    ca_parcels = fetch_ca_parcels(buffers_gdf=buffers)
     scag_parcels = fetch_scag_parcels(buffers_gdf=buffers)
-    scag_parcels[2000:4000].explore(tiles="CartoDB positron")
-    return ca_parcels, scag_parcels
+    return (scag_parcels,)
 
 
 @app.cell
 def _(scag_parcels):
+    # There are > 6000 parcels, which is too much to draw, can only show a subset, but calculations done on all parcels
+    scag_parcels[2000:6000].explore(tiles="CartoDB positron")
+    return
+
+
+@app.cell(hide_code=True)
+def _(new_stops, scag_parcels):
     scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
-    scag_with_density[2000:4000].explore("current_density_du_per_ac", tiles="CartoDB positron", vmax=50)
-    return (scag_with_density,)
 
-
-@app.cell
-def _(new_stops, scag_with_density):
     scag_with_dwelling_units = create_buffer_donuts(stops_gdf=new_stops, scag_density=scag_with_density)
     return (scag_with_dwelling_units,)
 
 
 @app.cell
-def _(scag_with_dwelling_units):
-    scag_with_dwelling_units[2000:4000].explore("buffer_zone_id", tiles="CartoDB positron")
+def _(
+    buffer_200_4326,
+    buffer_dist_ft,
+    buffer_qtr_4326,
+    parcels_gdf,
+    scag_density,
+    scag_with_dwelling_units,
+    stops_gdf,
+):
+    # Create 200ft, quarter mi, and half mi zones around the stations
+    def create_donuts():
+        def trim_around_stations():
+            buffer_df = stops_gdf.to_crs("EPSG:2229").geometry.buffer(buffer_dist_ft)
+            joined = gpd.sjoin(  # noqa: F841
+                parcels_gdf.to_crs("EPSG:4326"),
+                buffer_df.to_crs("EPSG:4326"),
+                predicate="intersects",
+            )
+
+        trim_200 = trim_around_stations(scag_density, stops_gdf, 200)
+        trim_qtr = trim_around_stations(scag_density, stops_gdf, 1320)
+        trim_half = trim_around_stations(scag_density, stops_gdf, 2640)
+        qtrmile_donut = gpd.overlay(trim_qtr, buffer_200_4326, how="difference")
+        halfmile_donut = gpd.overlay(trim_half, buffer_qtr_4326, how="difference")
+
+        residential = gpd.GeoDataFrame(pd.concat([trim_200, qtrmile_donut, halfmile_donut], ignore_index=True))  # noqa: F841
+
+    scag_with_dwelling_units[2000:6000].explore("buffer_zone_id", tiles="CartoDB positron")
     return
 
 
 @app.cell
 def _(scag_with_dwelling_units):
-    scag_with_dwelling_units[2000:4000].explore("dwelling_units_new", tiles="CartoDB positron")
+    # The new densities will be
+    # 200ft: 120 du/ac
+    # 1/4 mi: 100 du/ac
+    # 1/2 mi: 80 du/ac
+    scag_with_dwelling_units[2000:6000].explore("new_density_du_per_ac", tiles="CartoDB positron")
     return
 
 
 @app.cell
-def _(scag_with_dwelling_units):
-    scag_with_dwelling_units
+def _(area_acres, df, scag_with_dwelling_units):
+    # Translating zoning code to density units to get the density units
+    # https://scag-spm-documentation.readthedocs.io/en/latest/scag_lu_codes_description/
+    def calc_current_density():
+        la_density = df["ZN19_CITY"].case_when(  # noqa: F841
+            [
+                (df["ZN19_CITY"] == "1122", 43560 / 1500),
+                (df["ZN19_CITY"] == "1140", 3 / area_acres.replace(0, np.nan)),
+                (df["ZN19_CITY"] == "1123", 18),
+                (df["ZN19_CITY"] == "1124", 60),
+            ]
+        )
+
+    scag_with_dwelling_units[2000:6000].explore("current_density_du_per_ac", tiles="CartoDB positron")
+    return
+
+
+@app.cell(hide_code=True)
+def _(buffers, new_stops, scag_with_dwelling_units):
+    parcels_with_stops = assign_nearest_stop(scag_with_dwelling_units, new_stops, buffers)
+
+    stops_result = aggregate_parcels_to_stops(parcels_with_stops, new_stops)
+    return parcels_with_stops, stops_result
+
+
+@app.cell
+def _(parcels_with_stops):
+    # Showing the potential new dwelling units = new_du - current_du
+    parcels_with_stops[2000:6000].explore("additional_du", tiles="CartoDB positron")
     return
 
 
 @app.cell
-def _(buffers, ca_parcels, scag_with_dwelling_units, stops):
-    joined_parcels = join_scag_ca_parcels(ca_parcels=ca_parcels, scag_by_apn=scag_with_dwelling_units)
-    parcels_with_stops = assign_nearest_stop(joined_parcels, stops, buffers)
-
-    print("=== Step 9: Aggregate parcels to stops ===")
-    stops_result = aggregate_parcels_to_stops(parcels_with_stops, stops)
-
-    {"stops": stops_result, "parcels": joined_parcels}
+def _(stops_result):
+    print(f"Total potential dwelling units for OC street car: {int(stops_result['additional_dwelling_units'].sum())}")
     return
 
 
-@app.cell
-def _(ca_parcels):
-    ca_parcels
-    return
+@app.cell(hide_code=True)
+def _(STOPS_URL):
+    stops = fetch_from_arcgis(url=STOPS_URL)
+    stops = stops.set_crs("EPSG:4326")
+    return (stops,)
+
+
+@app.cell(hide_code=True)
+def _(MarkerCluster, PARCELS_URL, VectorGridProtobuf, folium, stops):
+    m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=5)
+
+    VectorGridProtobuf(PARCELS_URL, "folium_layer_name").add_to(m)
+    cluster = MarkerCluster(disable_clustering_at_zoom=10).add_to(m)
+
+    for _, _row in stops.iterrows():
+        color = "blue" if _row["Tier"] == 2 else "red"
+        cluster.add_child(
+            folium.CircleMarker(
+                location=[_row.geometry.y, _row.geometry.x],
+                radius=5,
+                tooltip=folium.Tooltip(
+                    f"""
+                    Stop Name: {_row["stop_name"]}<br>
+                    Tier: {_row["Tier"]}<br>
+                    Routes: {_row["route_ids_served"]}<br>
+                    City: {_row["city"]}<br>
+                    County: {_row["county"]}<br>
+                    Route type: {_row["routetypes"]}<br>
+                    Parcel acres: {_row["parcel_acres"]}"""
+                ),
+                color=color,
+                fill_color=color,
+            ).add_to(m)
+        )
+    return (m,)
 
 
 @app.cell
-def _(scag_parcels):
-    scag_parcels
-    return
-
-
-@app.cell
-def _(ca_parcels, scag_with_density):
-    temp_joined = join_scag_ca_parcels(ca_parcels=ca_parcels, scag_by_apn=scag_with_density)
-    temp_joined
-    return (temp_joined,)
-
-
-@app.cell
-def _(buffers, new_stops, temp_joined):
-    temp_assigned = assign_nearest_stop(buffers_gdf=buffers, stops_gdf=new_stops, parcels_gdf=temp_joined)
-    temp_assigned.set_geometry("clipped_geom").set_crs("EPSG:3310")[:2000].explore()
-    return (temp_assigned,)
-
-
-@app.cell
-def _(temp_assigned):
-    compute_scag_density(scag_parcels=temp_assigned)
+def _(m):
+    # We only need the GTFS transit schedules and this notebook will calculate
+    # the potential that SB 79 has for California housing crisis
+    m
     return
 
 

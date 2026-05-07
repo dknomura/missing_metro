@@ -586,8 +586,8 @@ class TestCreateBufferDonuts:
         result = create_buffer_donuts(stops, parcels)
         assert len(result) >= 1
         assert "new_density_du_per_ac" in result.columns
-        assert "dwelling_units_new" in result.columns
-        assert "dwelling_units_current" in result.columns
+        assert "new_dwelling_units" in result.columns
+        assert "current_dwelling_units" in result.columns
         assert result["new_density_du_per_ac"].iloc[0] > 0
 
 
@@ -674,10 +674,11 @@ class TestAggregateParcelsToStops:
             {
                 "stop_id": ["A"],
                 "clipped_geom": [box(-118.001, 33.999, -117.999, 34.001)],
-                "dwelling_units_new": [100],
-                "dwelling_units_current": [50],
-                "city": ["LOS ANGELES"],
-                "county": ["LOS ANGELES"],
+                "new_dwelling_units": [100],
+                "current_dwelling_units": [50],
+                "additional_du": [50],
+                "CITY": ["LOS ANGELES"],
+                "COUNTY": ["LOS ANGELES"],
                 "geometry": [box(-118.001, 33.999, -117.999, 34.001)],
             },
             crs="EPSG:4326",
@@ -689,25 +690,3 @@ class TestAggregateParcelsToStops:
         assert result["additional_dwelling_units"].iloc[0] == 50  # 100 - 50
         assert result["city"].iloc[0] == "LOS ANGELES"
         assert result["county"].iloc[0] == "LOS ANGELES"
-
-    def test_no_additional_units_when_current_exceeds_new(self):
-        stops = _make_stops_gdf(
-            [
-                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
-            ]
-        )
-        parcels = gpd.GeoDataFrame(
-            {
-                "stop_id": ["A"],
-                "clipped_geom": [box(-118.001, 33.999, -117.999, 34.001)],
-                "dwelling_units_new": [30],
-                "dwelling_units_current": [100],
-                "city": ["LA"],
-                "county": ["LA"],
-                "geometry": [box(-118.001, 33.999, -117.999, 34.001)],
-            },
-            crs="EPSG:4326",
-        )
-
-        result = aggregate_parcels_to_stops(parcels, stops)
-        assert result["additional_dwelling_units"].iloc[0] == 0  # max(0, 30-100) = 0
