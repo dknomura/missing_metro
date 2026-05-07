@@ -1,6 +1,7 @@
 _site/
 __marimo__
 test_output
+.ruff_cache/
 
 .vscode/
 data/

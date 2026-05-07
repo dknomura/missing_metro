@@ -44,14 +44,14 @@ ignore = [
 ]
 
 [tool.marimo.runtime]
-pythonpath = ["src"]
+pythonpath = ["notebooks"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["notebooks"]
 
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["notebooks"]

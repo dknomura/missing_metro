@@ -10,7 +10,7 @@
 
 import marimo
 
-__generated_with = "0.23.3"
+__generated_with = "0.23.5"
 app = marimo.App(width="medium")
 
 with app.setup:
@@ -93,7 +93,7 @@ def _(stops_df):
 
     parcels = parcels.set_crs("EPSG:4326").to_crs("EPSG:3310")
     parcels
-    return
+    return (buffer,)
 
 
 @app.cell
@@ -331,7 +331,7 @@ def _(halfmile_donut, qtrmile_donut, trim_200ft_df):
     print(f"Total dwelling units: {residential_by_apn['dwelling_units_new'].sum():.0f}")
 
     residential_by_apn.to_file(OUT_PATH + r"\zoning_around_metro.json", driver="GeoJSON")
-    return (residential_by_apn,)
+    return residential_by_apn, unary_union
 
 
 @app.cell
@@ -474,11 +474,11 @@ def _(stops_df):
     #     parcels = gpd.GeoDataFrame(pd.concat([parcels, _parcels], ignore_index=True))
     #     time.sleep(delay)
     # parcels
-    return (buffer,)
+    return HALF_MI_M, buffer
 
 
 @app.cell
-def _(gpd):
+def _():
     parcel_file = gpd.read_file(r"C:\Users\dknom\code\missing_metro\data\parcels.geojson")
     parcel_file
     return (parcel_file,)
@@ -503,14 +503,14 @@ def _(stops_df):
 
 
 @app.cell
-def _(gpd):
+def _():
     parcels_clipped = gpd.read_file(r"C:\Users\dknom\code\missing_metro\data\parcels_clipped.geojson", driver="GeoJSON")
     parcels_clipped
     return (parcels_clipped,)
 
 
 @app.cell
-def _(buffer, gpd, parcels_clipped):
+def _(buffer, parcels_clipped):
     parcels_with_stops = gpd.sjoin(
         parcels_clipped.to_crs("EPSG:3310"),
         buffer[["stop_id", "geometry"]],
@@ -614,14 +614,11 @@ def _(parcels_deduped):
 
 
 @app.cell
-def _(gpd):
+def _():
     scag_parcels = gpd.read_file(r"C:\Users\dknom\code\missing_metro\data\zoning_around_metro.json", driver="GeoJSON")
     scag_parcels
     return
 
-
-if __name__ == "__main__":
-    app.run()
 
 if __name__ == "__main__":
     app.run()
