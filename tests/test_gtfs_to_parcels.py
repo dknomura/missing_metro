@@ -364,8 +364,58 @@ class TestParseGtfsZip:
         finally:
             path.unlink(missing_ok=True)
 
+    def test_no_parent_stations(self):
+        """Feed with only location_type=0 stops (no parent stations) should still work.
+
+        Some GTFS feeds (e.g. OC Streetcar) have no location_type=1 entries.
+        Each boarding stop should be treated as its own station.
+        """
+        gtfs_bytes = _make_gtfs_zip(
+            routes=[{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
+            trips=[
+                {"route_id": "801", "trip_id": "t1", "service_id": "wk", "direction_id": "0"},
+                {"route_id": "801", "trip_id": "t2", "service_id": "wk", "direction_id": "1"},
+            ],
+            stop_times=[
+                {"trip_id": "t1", "stop_id": "S1"},
+                {"trip_id": "t2", "stop_id": "S1"},
+            ],
+            stops=[
+                {
+                    "stop_id": "S1",
+                    "stop_name": "Stop 1",
+                    "stop_lat": "34.0",
+                    "stop_lon": "-118.0",
+                    "location_type": "0",
+                },
+            ],
+            calendar=[
+                {
+                    "service_id": "wk",
+                    "monday": "1",
+                    "tuesday": "1",
+                    "wednesday": "1",
+                    "thursday": "1",
+                    "friday": "1",
+                    "saturday": "0",
+                    "sunday": "0",
+                }
+            ],
+        )
+        path = Path(tempfile.gettempdir()) / "_test_gtfs_no_parent.zip"
+
+        path.write_bytes(gtfs_bytes)
+        try:
+            result = parse_gtfs_zip(path)
+            assert len(result) == 1
+            assert result.iloc[0]["stop_id"] == "S1"
+            assert result.iloc[0]["Tier"] == 2  # route_type=0, 2 trips/5=0.4/day < 72
+        finally:
+            path.unlink(missing_ok=True)
+
     def test_mixed_route_types(self):
         """Station with route_types '0,1' should be Tier 1 (has subway)."""
+
         gtfs_bytes = _make_gtfs_zip(
             routes=[
                 {"route_id": "801", "route_type": "1", "agency_id": "metro"},
