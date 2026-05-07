@@ -610,8 +610,6 @@ class TestJoinScagCaParcels:
         )
         result = join_scag_ca_parcels(scag, ca)
         assert len(result) == 2
-        assert "current_density" in result.columns
-        assert "new_density" in result.columns
         assert "city" in result.columns
         assert "county" in result.columns
         assert "apn" in result.columns

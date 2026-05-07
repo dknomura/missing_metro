@@ -19,6 +19,7 @@ with app.setup(hide_code=True):
     import csv
     import io
     import json
+    import tempfile
     import time
     import zipfile
     from collections import defaultdict
@@ -30,6 +31,7 @@ with app.setup(hide_code=True):
     import numpy as np
     import pandas as pd
     import requests
+    import shapely
     from shapely import unary_union
     from shapely.geometry import Polygon
 
@@ -354,14 +356,13 @@ with app.setup(hide_code=True):
         )
         if parcels.empty:
             return parcels
-        parcels = parcels.set_crs("EPSG:4326").to_crs(f"EPSG:{wkid}")
 
         # Deduplicate by APN
         if "PARCEL_APN" in parcels.columns:
             before = len(parcels)
             parcels = parcels.groupby("PARCEL_APN", as_index=False).first()
             print(f"CA parcels: {before} → {len(parcels)} after APN dedup")
-        return parcels
+        return parcels.set_crs("EPSG:4326").to_crs(f"EPSG:{wkid}")
 
     def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Add ``current_density_du_per_ac`` to SCAG parcels using LA / non-LA logic.
@@ -452,7 +453,7 @@ with app.setup(hide_code=True):
 
         df["current_density_du_per_ac"] = scag_density
         df.loc[is_la, "current_density_du_per_ac"] = la_density
-
+        df["current_density_du_per_ac"] = pd.to_numeric(df["current_density_du_per_ac"], errors="coerce")
         return df
 
     def trim_around_stations(
@@ -608,7 +609,7 @@ with app.setup(hide_code=True):
                 "area_acres": area_acres.values,
                 "new_density_du_per_ac": weighted_density,
                 "dwelling_units_new": weighted_density * area_acres.values,
-                "dwelling_units_current": first_agg["current_density_du_per_ac"].values * area_acres.values,
+                "dwelling_units_current": first_agg["current_density_du_per_ac"].fillna(0).values * area_acres.values,
                 "current_density_du_per_ac": first_agg["current_density_du_per_ac"].values,
                 "Tier": first_agg["Tier"].values,
                 "ZN19_CITY": first_agg["ZN19_CITY"].values,
@@ -638,10 +639,6 @@ with app.setup(hide_code=True):
         """
         scag_cols = [
             "APN20",
-            "current_density_du_per_ac",
-            "new_density_du_per_ac",
-            "dwelling_units_new",
-            "dwelling_units_current",
             "ZN19_CITY",
             "ZN19_SCAG",
             "area_acres",
@@ -680,15 +677,6 @@ with app.setup(hide_code=True):
         )
         merged["apn"] = merged["PARCEL_APN"].combine_first(merged["APN20"])
 
-        # Rename density columns
-        merged.rename(
-            columns={
-                "current_density_du_per_ac": "current_density",
-                "new_density_du_per_ac": "new_density",
-            },
-            inplace=True,
-        )
-
         return gpd.GeoDataFrame(merged, geometry="geometry", crs=ca_parcels.crs)
 
     def assign_nearest_stop(
@@ -707,10 +695,11 @@ with app.setup(hide_code=True):
         gpd.GeoDataFrame
             One row per ``(stop_id, APN)`` with a ``clipped_geom`` column.
         """
-        # Spatial join: parcels → buffers
+        # Reproject once
         parcels_3310 = parcels_gdf.to_crs("EPSG:3310")
         buffers_3310 = buffers_gdf.to_crs("EPSG:3310")
 
+        # Spatial join: parcels → buffers
         joined = gpd.sjoin(
             parcels_3310,
             buffers_3310[["stop_id", "geometry"]],
@@ -726,25 +715,30 @@ with app.setup(hide_code=True):
         deduped = joined[~joined.index.duplicated(keep="first")].copy()
 
         if len(multi_ids) > 0:
-            # For multi-buffer parcels, find nearest stop
-            multi_parcels = joined.loc[multi_ids, ["stop_id"]]
-            multi_exploded = multi_parcels.explode("stop_id").reset_index()
-            multi_exploded.columns = ["parcel_idx", "stop_id"]
+            # ---- VECTORIZED nearest-stop assignment ----
+            # Filter to multi-stop parcels only
+            multi_rows = joined.loc[multi_ids].copy()
 
-            stop_points_3310 = stops_gdf.set_index("stop_id").to_crs("EPSG:3310").geometry
-            parcel_centroids = parcels_3310.geometry.centroid
+            # Get centroids for these parcels (aligned with multi_rows by index)
+            centroids_3310 = parcels_3310.loc[multi_ids].geometry.centroid
 
-            multi_exploded["distance"] = multi_exploded.apply(
-                lambda r: parcel_centroids.iloc[r["parcel_idx"]].distance(stop_points_3310[r["stop_id"]]),
-                axis=1,
-            )
+            # Get stop points (indexed by stop_id)
+            stops_3310 = stops_gdf.set_index("stop_id").to_crs("EPSG:3310").geometry
 
-            nearest = multi_exploded.loc[
-                multi_exploded.groupby("parcel_idx")["distance"].idxmin(),
-                ["parcel_idx", "stop_id"],
-            ]
-            nearest = nearest.set_index("parcel_idx")["stop_id"]
-            deduped.loc[nearest.index, "stop_id"] = nearest
+            # Compute distances: for each row, distance from parcel centroid to its stop
+            # Vectorized: pass arrays of (centroids, stop_points)
+            stop_points_for_rows = stops_3310.loc[multi_rows["stop_id"]].values
+            centroid_array = centroids_3310.loc[multi_rows.index].values
+
+            # Shapely distance (vectorized over arrays)
+            multi_rows["distance"] = shapely.distance(centroid_array, stop_points_for_rows)
+
+            # For each original parcel index, pick the stop with minimum distance
+            nearest_idx = multi_rows.groupby(multi_rows.index)["distance"].idxmin()
+            nearest = multi_rows.loc[nearest_idx, ["stop_id"]]
+
+            # Assign back to deduped
+            deduped.loc[nearest.index, "stop_id"] = nearest["stop_id"]
 
         # Clip parcels to assigned buffer
         buffer_indexed = buffers_3310.set_index("stop_id")[["geometry"]]
@@ -754,7 +748,7 @@ with app.setup(hide_code=True):
         # Deduplicate by (stop_id, APN)
         apn_col = "PARCEL_APN" if "PARCEL_APN" in deduped.columns else "APN20"
         deduped = deduped.groupby(["stop_id", apn_col], as_index=False).first()
-
+        deduped = deduped.set_crs("EPSG:3310")
         return deduped
 
     def aggregate_parcels_to_stops(
@@ -966,8 +960,6 @@ def _(mo):
 
 @app.cell
 def _(Optional, file_input, url_input):
-    import tempfile
-
     # --- React to user input ---
     def get_gtfs_bytes() -> Optional[bytes]:
         """Return GTFS bytes from whichever input the user used."""
@@ -1057,7 +1049,34 @@ def _(buffers, ca_parcels, scag_with_dwelling_units, stops):
 
 
 @app.cell
-def _():
+def _(ca_parcels):
+    ca_parcels
+    return
+
+
+@app.cell
+def _(scag_parcels):
+    scag_parcels
+    return
+
+
+@app.cell
+def _(ca_parcels, scag_with_density):
+    temp_joined = join_scag_ca_parcels(ca_parcels=ca_parcels, scag_by_apn=scag_with_density)
+    temp_joined
+    return (temp_joined,)
+
+
+@app.cell
+def _(buffers, new_stops, temp_joined):
+    temp_assigned = assign_nearest_stop(buffers_gdf=buffers, stops_gdf=new_stops, parcels_gdf=temp_joined)
+    temp_assigned.set_geometry("clipped_geom").set_crs("EPSG:3310")[:2000].explore()
+    return (temp_assigned,)
+
+
+@app.cell
+def _(temp_assigned):
+    compute_scag_density(scag_parcels=temp_assigned)
     return
 
 
