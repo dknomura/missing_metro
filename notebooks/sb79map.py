@@ -892,6 +892,7 @@ def _():
     STOPS_URL = (
         "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stations/FeatureServer/0/query"
     )
+    print("https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip")
     return (
         MarkerCluster,
         Optional,
