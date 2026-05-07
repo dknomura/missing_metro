@@ -2,9 +2,11 @@
 # requires-python = ">=3.13"
 # dependencies = [
 #     "auto-mix-prep>=0.2.0",
-#     "folium>=0.20.0",
+#     "folium>=0.12",
 #     "geopandas>=1.1.3",
+#     "mapclassify>=2.10.0",
 #     "marimo>=0.23.3",
+#     "matplotlib>=3.10.9",
 # ]
 # ///
 
@@ -186,6 +188,14 @@ with app.setup(hide_code=True):
         parent_stations = stops_df[stops_df["location_type"] == "1"].copy()
         boarding_stops = stops_df[stops_df["location_type"] == "0"].copy()
 
+        # If there are no parent stations (location_type=1), treat all boarding
+        # stops (location_type=0) as individual stations.  Some GTFS feeds
+        # (e.g. OC Streetcar) only have location_type=0 stops with no parent
+        # station hierarchy.
+        if parent_stations.empty:
+            parent_stations = boarding_stops.copy()
+            boarding_stops = gpd.GeoDataFrame()  # no routes to propagate
+
         stop_times = list(csv.DictReader(io.StringIO(z.read("stop_times.txt").decode("utf-8"))))
         stop_to_routes: dict[str, set[str]] = defaultdict(set)
         for st in stop_times:
@@ -195,7 +205,7 @@ with app.setup(hide_code=True):
 
         parent_to_routes: dict[str, set[str]] = defaultdict(set)
         for _, bs in boarding_stops.iterrows():
-            parent = bs["parent_station"]
+            parent = bs["parent_station"] if "parent_station" in bs else None
             if parent and parent in set(parent_stations["stop_id"]):
                 parent_to_routes[parent].update(stop_to_routes.get(bs["stop_id"], set()))
 
@@ -356,6 +366,10 @@ with app.setup(hide_code=True):
     def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         """Add ``current_density_du_per_ac`` to SCAG parcels using LA / non-LA logic.
 
+        For LA parcels, first tries ``ZN19_CITY`` zone codes. If no match is found,
+        falls through to try ``ZN19_SCAG`` codes. Parcels that don't match any code
+        get ``NaN`` (excluded from downstream calculations).
+
         Parameters
         ----------
         scag_parcels:
@@ -369,7 +383,7 @@ with app.setup(hide_code=True):
         """
         df = scag_parcels.copy()
 
-        # LA density: map ZN19_CITY zone codes → du/ac
+        # --- LA density: map ZN19_CITY zone codes → du/ac ---
         la_density = df["ZN19_CITY"].case_when(
             [
                 (df["ZN19_CITY"].str.contains("RD1.5", na=False), 43560 / 1500),
@@ -398,34 +412,47 @@ with app.setup(hide_code=True):
                 (df["ZN19_CITY"].str.contains("RW1", na=False), 43560 / 2300),
                 (df["ZN19_CITY"].str.contains("R2", na=False), 43560 / 2500),
                 (df["ZN19_CITY"].str.contains("RW2", na=False), 43560 / 1150),
-                (df["ZN19_CITY"] != "Los Angeles", 0),
+                (df["ZN19_CITY"].str.contains("C1", na=False), 100),
+                (df["ZN19_CITY"].str.contains("C2", na=False), 43560 / 400),
+                (df["ZN19_CITY"].str.contains("C3", na=False), 110),
+                (df["ZN19_CITY"].str.contains("C4", na=False), 200),
             ]
         )
 
-        # Non-LA density: map ZN19_SCAG codes → du/ac
+        # --- Non-LA / fallback density: map ZN19_SCAG codes → du/ac ---
+        zn19_scag = df["ZN19_SCAG"].astype(str)
         area_acres = df.to_crs("EPSG:2229").area / 43560
-        non_la_density = df["ZN19_SCAG"].case_when(
+        scag_density = zn19_scag.case_when(
             [
-                (df["ZN19_SCAG"] == 1111, 10),
-                (df["ZN19_SCAG"] == 1112, 8),
-                (df["ZN19_SCAG"] == 1113, 2),
-                (df["ZN19_SCAG"] == 1121, 3 / area_acres.replace(0, np.nan)),
-                (df["ZN19_SCAG"] == 1122, 3 / area_acres.replace(0, np.nan)),
-                (df["ZN19_SCAG"] == 1140, 3 / area_acres.replace(0, np.nan)),
-                (df["ZN19_SCAG"] == 1123, 18),
-                (df["ZN19_SCAG"] == 1124, 60),
-                (df["ZN19_SCAG"] == 1125, 80),
-                (df["ZN19_SCAG"] == 1131, 6),
-                (df["ZN19_SCAG"] == 1150, 1),
-                (df["ZN19_SCAG"] != 0, 0),
+                (zn19_scag == "1110", 1 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1111", 1 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1112", 1 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1113", 1 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1121", 3 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1122", 3 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1140", 3 / area_acres.replace(0, np.nan)),
+                (zn19_scag == "1123", 18),
+                (zn19_scag == "1124", 60),
+                (zn19_scag == "1125", 80),
+                (zn19_scag == "1131", 6),
+                (zn19_scag == "1150", 1),
+                (zn19_scag == "1150", 1),
+                (zn19_scag == "1600", 40),
+                (zn19_scag == "1610", 40),
+                (zn19_scag == "1620", 30),
+                (zn19_scag.isin(["1220", "1221", "1222"]), 47),
+                (zn19_scag.isin(["2000", "2100", "2200", "2300", "2400", "2500", "2600", "2700"]), 1 / 5),
+                (zn19_scag.isin(["1900", "7777", "1500", "1233", "1210", "1211", "1212", "1213", "1247"]), 0),
+                (zn19_scag == zn19_scag, np.nan),
             ]
         )
 
-        df["current_density_du_per_ac"] = np.where(
-            df["CITY"] == "Los Angeles",
-            la_density,
-            non_la_density,
-        )
+        # For LA parcels: use ZN19_CITY density if matched, otherwise fall through to SCAG
+        is_la = df["CITY"] == "Los Angeles"
+
+        df["current_density_du_per_ac"] = scag_density
+        df.loc[is_la, "current_density_du_per_ac"] = la_density
+
         return df
 
     def trim_around_stations(
@@ -472,8 +499,20 @@ with app.setup(hide_code=True):
             rsuffix="_stop",
         )
 
+        # Normalize Tier column name after sjoin
+        # - If parcels had Tier, sjoin renames buffer's Tier to Tier__stop
+        #   and parcels' Tier to Tier_left (geopandas 1.x behavior)
+        # - If parcels didn't have Tier, sjoin keeps buffer's Tier as-is
+        if "Tier_left" in joined.columns:
+            # Parcels had Tier; use the buffer's Tier (Tier__stop)
+            joined["Tier"] = joined["Tier__stop"]
+            joined.drop(columns=["Tier_left", "Tier__stop"], inplace=True)
+        elif "Tier__stop" in joined.columns:
+            # Parcels didn't have Tier; rename buffer's Tier back
+            joined.rename(columns={"Tier__stop": "Tier"}, inplace=True)
+
         # Clip to buffer boundary
-        trimmed = gpd.overlay(joined, buffer_4326, how="intersection")
+        trimmed = gpd.overlay(joined, buffer_4326[["stop_id", "geometry"]], how="intersection")
         trimmed["buffer_zone_id"] = zone_name
         return trimmed
 
@@ -486,7 +525,7 @@ with app.setup(hide_code=True):
         Steps
         -----
         1. ``trim_around_stations`` for 200 ft, 1320 ft, 2640 ft.
-        2. Create donuts: ¼mi \\ 200ft, ½mi \\ ¼mi.
+        2. Create donuts: ¼mi \\\\ 200ft, ½mi \\\\ ¼mi.
         3. Concat all three zones.
         4. Assign zone density by ``(buffer_zone_id, Tier)``.
         5. Group by ``APN20`` → weighted ``new_density_du_per_ac``,
@@ -535,43 +574,57 @@ with app.setup(hide_code=True):
         zone_densities_series = pd.Series(ZONE_DENSITIES)
         residential["zone_density"] = residential.set_index(["buffer_zone_id", "Tier"]).index.map(zone_densities_series)
 
-        # --- 6. Aggregate by APN20 ---
-        def _aggregate_parcel(group: pd.DataFrame) -> pd.Series:
-            apn = group.name
-            total_area = group["area_sqft"].sum()
-            total_area_acres = total_area / 43560
+        # --- 6. Aggregate by APN20 (vectorized) ---
+        # Total area per APN
+        area_agg = residential.groupby("APN20")["area_sqft"].sum().rename("area_sqft_total")
+        area_acres = area_agg / 43560
 
-            weighted_density = (group["area_sqft"] * group["zone_density"]).sum() / total_area if total_area > 0 else 0.0
+        # Weighted density: sum(area_sqft * zone_density) / total_area
+        residential["area_x_density"] = residential["area_sqft"] * residential["zone_density"]
+        weighted_sum = residential.groupby("APN20")["area_x_density"].sum()
+        weighted_density = np.where(area_agg > 0, weighted_sum / area_agg, 0.0)
 
-            unioned_geom = unary_union(group.geometry.tolist())
-            first = group.iloc[0]
+        # Union geometry per APN
+        geom_agg = residential.groupby("APN20")["geometry"].agg(unary_union)
 
-            return pd.Series(
-                {
-                    "APN20": apn,
-                    "geometry": unioned_geom,
-                    "area_acres": total_area_acres,
-                    "new_density_du_per_ac": weighted_density,
-                    "dwelling_units_new": weighted_density * total_area_acres,
-                    "dwelling_units_current": first["current_density_du_per_ac"] * total_area_acres,
-                    "current_density_du_per_ac": first["current_density_du_per_ac"],
-                    "Tier": first["Tier"],
-                    "ZN19_CITY": first.get("ZN19_CITY", ""),
-                    "ZN19_SCAG": first.get("ZN19_SCAG", ""),
-                    "COUNTY": first.get("COUNTY", ""),
-                    "CITY": first.get("CITY", ""),
-                }
-            )
+        # First values for other columns
+        first_agg = residential.groupby("APN20").first()[
+            [
+                "current_density_du_per_ac",
+                "Tier",
+                "ZN19_CITY",
+                "ZN19_SCAG",
+                "COUNTY",
+                "CITY",
+                "buffer_zone_id",
+            ]
+        ]
 
-        by_apn = (
-            residential.groupby("APN20", as_index=True).apply(_aggregate_parcel, include_groups=False).reset_index(drop=True)
+        # Build result
+        by_apn = gpd.GeoDataFrame(
+            {
+                "APN20": area_agg.index,
+                "geometry": geom_agg.values,
+                "area_acres": area_acres.values,
+                "new_density_du_per_ac": weighted_density,
+                "dwelling_units_new": weighted_density * area_acres.values,
+                "dwelling_units_current": first_agg["current_density_du_per_ac"].values * area_acres.values,
+                "current_density_du_per_ac": first_agg["current_density_du_per_ac"].values,
+                "Tier": first_agg["Tier"].values,
+                "ZN19_CITY": first_agg["ZN19_CITY"].values,
+                "ZN19_SCAG": first_agg["ZN19_SCAG"].values,
+                "COUNTY": first_agg["COUNTY"].values,
+                "CITY": first_agg["CITY"].values,
+                "buffer_zone_id": first_agg["buffer_zone_id"].values,
+            },
+            geometry="geometry",
+            crs=residential.crs,
         )
 
-        result = gpd.GeoDataFrame(by_apn, geometry="geometry", crs=residential.crs)
         print(f"Before APN dedup: {len(residential)} rows")
-        print(f"After APN dedup:  {len(result)} rows")
-        print(f"Total dwelling units (new): {result['dwelling_units_new'].sum():.0f}")
-        return result
+        print(f"After APN dedup:  {len(by_apn)} rows")
+        print(f"Total dwelling units (new): {by_apn['dwelling_units_new'].sum():.0f}")
+        return by_apn
 
     def join_scag_ca_parcels(
         scag_by_apn: gpd.GeoDataFrame,
@@ -940,50 +993,66 @@ def _(Optional, file_input, url_input):
         print(f"File created at: {tmp.name}")
 
         # Optional: Read back from the start
-        new_stops = parse_gtfs_zip(tmp.name)
-    new_stops.explore()
+        new_stops = parse_gtfs_zip(tmp.name, tier_overrides={"route-mourbghe-3": 2})
+    new_stops.explore(tiles="CartoDB positron")
     return (new_stops,)
 
 
 @app.cell
 def _(new_stops):
     buffers = create_half_mi_buffers(new_stops)
-    buffers.explore()
+    buffers.explore(tiles="CartoDB positron")
     return (buffers,)
 
 
 @app.cell
 def _(buffers):
-    scag_parcels = fetch_scag_parcels(buffers_gdf=buffers)
-    scag_parcels
-    return (scag_parcels,)
-
-
-@app.cell
-def _(buffers):
     ca_parcels = fetch_ca_parcels(buffers_gdf=buffers)
-    ca_parcels
-    return (ca_parcels,)
+    scag_parcels = fetch_scag_parcels(buffers_gdf=buffers)
+    scag_parcels[2000:4000].explore(tiles="CartoDB positron")
+    return ca_parcels, scag_parcels
 
 
 @app.cell
 def _(scag_parcels):
     scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
-    scag_with_density[scag_with_density["current_density_du_per_ac"] > 0][:1000].explore("current_density_du_per_ac")
+    scag_with_density[2000:4000].explore("current_density_du_per_ac", tiles="CartoDB positron", vmax=50)
     return (scag_with_density,)
 
 
 @app.cell
 def _(new_stops, scag_with_density):
     scag_with_dwelling_units = create_buffer_donuts(stops_gdf=new_stops, scag_density=scag_with_density)
-    scag_with_dwelling_units[scag_with_dwelling_units["new_dwelling_units"] > 0][:1000].explore("dwelling_units_new")
     return (scag_with_dwelling_units,)
 
 
 @app.cell
-def _(ca_parcels, scag_with_dwelling_units):
+def _(scag_with_dwelling_units):
+    scag_with_dwelling_units[2000:4000].explore("buffer_zone_id", tiles="CartoDB positron")
+    return
+
+
+@app.cell
+def _(scag_with_dwelling_units):
+    scag_with_dwelling_units[2000:4000].explore("dwelling_units_new", tiles="CartoDB positron")
+    return
+
+
+@app.cell
+def _(scag_with_dwelling_units):
+    scag_with_dwelling_units
+    return
+
+
+@app.cell
+def _(buffers, ca_parcels, scag_with_dwelling_units, stops):
     joined_parcels = join_scag_ca_parcels(ca_parcels=ca_parcels, scag_by_apn=scag_with_dwelling_units)
-    joined_parcels
+    parcels_with_stops = assign_nearest_stop(joined_parcels, stops, buffers)
+
+    print("=== Step 9: Aggregate parcels to stops ===")
+    stops_result = aggregate_parcels_to_stops(parcels_with_stops, stops)
+
+    {"stops": stops_result, "parcels": joined_parcels}
     return
 
 

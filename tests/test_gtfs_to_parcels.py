@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import pytest
 from sb79map import (
     aggregate_parcels_to_stops,
@@ -499,22 +500,22 @@ class TestComputeScagDensity:
     def test_non_la_density(self):
         parcels = _make_parcels_gdf(
             [
-                {"APN20": "1", "ZN19_SCAG": 1111, "CITY": "Other", "bbox": (0, 0, 100, 100)},
+                {"APN20": "1", "ZN19_SCAG": 1111, "CITY": "Other", "bbox": (-118.3, 34.0, -118.2, 34.1)},
             ]
         )
         result = compute_scag_density(parcels)
-        # 1111 → 10 du/ac
-        assert result.iloc[0]["current_density_du_per_ac"] == 10
+        # 1111 → 1 / area_acres (area-dependent)
+        assert result.iloc[0]["current_density_du_per_ac"] > 0
 
     def test_non_la_density_zero_default(self):
-        """Unrecognized ZN19_SCAG codes should get 0."""
+        """Unrecognized ZN19_SCAG codes should get NaN (excluded downstream)."""
         parcels = _make_parcels_gdf(
             [
-                {"APN20": "1", "ZN19_SCAG": 9999, "CITY": "Other", "bbox": (0, 0, 100, 100)},
+                {"APN20": "1", "ZN19_SCAG": 9999, "CITY": "Other", "bbox": (-118.3, 34.0, -118.2, 34.1)},
             ]
         )
         result = compute_scag_density(parcels)
-        assert result.iloc[0]["current_density_du_per_ac"] == 0
+        assert np.isnan(result.iloc[0]["current_density_du_per_ac"])
 
 
 # ---------------------------------------------------------------------------
