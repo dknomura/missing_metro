@@ -904,6 +904,7 @@ def _(mo):
     url_input = mo.ui.text(
         label="Or paste a URL to a GTFS zip",
         placeholder="https://example.com/gtfs.zip",
+        value="https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip",
     )
 
     mo.hstack([file_input, url_input], justify="start")
