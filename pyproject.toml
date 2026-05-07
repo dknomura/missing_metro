@@ -41,6 +41,7 @@ select = [
 
 ignore = [
     "B018", # Found useless expression (sometimes used for output in notebooks)
+    "F401"
 ]
 
 [tool.marimo.runtime]

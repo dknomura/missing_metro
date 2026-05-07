@@ -16,7 +16,7 @@ __generated_with = "0.23.5"
 app = marimo.App()
 
 with app.setup(hide_code=True):
-    import csv
+    import csv  # noqa: I001
     import io
     import json
     import tempfile
@@ -34,6 +34,13 @@ with app.setup(hide_code=True):
     import shapely
     from shapely import unary_union
     from shapely.geometry import Polygon
+    from typing import Optional
+
+    import folium
+    import marimo as mo
+    from folium.plugins import MarkerCluster, VectorGridProtobuf
+    import mapclassify  # noqa: f401
+    import matplotlib  # noqa: f401
 
     __generated_with = "0.23.5"
     SCAG_PARCELS_URL = "https://rdp.scag.ca.gov/mapping/rest/services/Housing/2020_Annual_Land_Use/MapServer/0/query"
@@ -880,33 +887,14 @@ with app.setup(hide_code=True):
 
         return result
 
-
-@app.cell(hide_code=True)
-def _():
-    from typing import Optional
-
-    import folium
-    import marimo as mo
-    from folium.plugins import MarkerCluster, VectorGridProtobuf
-
     PARCELS_URL = "https://vectortileservices3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/VectorTileServer/tile/{z}/{y}/{x}.pbf"
     STOPS_URL = (
         "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stations/FeatureServer/0/query"
     )
-    return (
-        MarkerCluster,
-        Optional,
-        PARCELS_URL,
-        STOPS_URL,
-        VectorGridProtobuf,
-        folium,
-        mo,
-    )
 
 
 @app.cell(hide_code=True)
-def _(mo):
-
+def _():
     file_input = mo.ui.file(
         label="Upload a GTFS zip file",
         filetypes=[".zip"],
@@ -922,18 +910,10 @@ def _(mo):
     return file_input, url_input
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.stop(True, mo.md("**Upload GTFS to continue.**"))
-    return
-
-
-@app.cell(hide_code=True)
-def _(Optional, file_input, url_input):
+@app.cell
+def _(file_input, url_input):
     # --- React to user input ---
-    print("Getting GTFS zip file from github")
-
-    def get_gtfs_bytes() -> Optional[bytes]:
+    def get_gtfs_bytes() -> bytes | None:
         """Return GTFS bytes from whichever input the user used."""
         if file_input.value:
             # Uploaded file -> file_input.value is a list of named tuples (name, contents)
@@ -1096,14 +1076,14 @@ def _(stops_result):
 
 
 @app.cell(hide_code=True)
-def _(STOPS_URL):
+def _():
     stops = fetch_from_arcgis(url=STOPS_URL)
     stops = stops.set_crs("EPSG:4326")
     return (stops,)
 
 
 @app.cell(hide_code=True)
-def _(MarkerCluster, PARCELS_URL, VectorGridProtobuf, folium, stops):
+def _(stops):
     m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=5)
 
     VectorGridProtobuf(PARCELS_URL, "folium_layer_name").add_to(m)
