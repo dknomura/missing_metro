@@ -895,6 +895,16 @@ with app.setup(hide_code=True):
 
 @app.cell(hide_code=True)
 def _():
+    mo.md("""
+    # Instructions for GTFS SB-79 analysis:
+    1. If you do not have your own GTFS zip file [click here](https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip) to download the GTFS zip for the OC streetcar
+    2. GTFS file needs to be for a transit system in the SCAG region (LA, Orange, Riverside, San Bernardino, Ventura).
+    """)  # noqa: E501
+    return
+
+
+@app.cell(hide_code=True)
+def _():
     file_input = mo.ui.file(
         label="Upload a GTFS zip file",
         filetypes=[".zip"],
@@ -903,7 +913,6 @@ def _():
     url_input = mo.ui.text(
         label="Or paste a URL to a GTFS zip",
         placeholder="https://example.com/gtfs.zip",
-        value="https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip",
     )
 
     mo.hstack([file_input, url_input], justify="start")
@@ -913,6 +922,8 @@ def _():
 @app.cell
 def _(file_input, url_input):
     # --- React to user input ---
+    mo.stop(not file_input.value, mo.md("⬆️ Upload a GTFS zip to continue"))
+
     def get_gtfs_bytes() -> bytes | None:
         """Return GTFS bytes from whichever input the user used."""
         if file_input.value:
