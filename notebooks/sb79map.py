@@ -26,6 +26,7 @@ with app.setup(hide_code=True):
     from collections.abc import Generator
     from pathlib import Path
     from typing import Any
+    from constants import SCAG_PARCELS_URL
 
     import geopandas as gpd
     import numpy as np
@@ -43,7 +44,6 @@ with app.setup(hide_code=True):
     import matplotlib  # noqa: f401
 
     __generated_with = "0.23.5"
-    SCAG_PARCELS_URL = "https://rdp.scag.ca.gov/mapping/rest/services/Housing/2020_Annual_Land_Use/MapServer/0/query"
     CA_PARCELS_URL = (
         "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/"
         "CA_Statewide_Parcels_Public_view/FeatureServer/0/query"
