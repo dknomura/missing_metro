@@ -18,15 +18,14 @@ app = marimo.App()
 with app.setup(hide_code=True):
     import csv  # noqa: I001
     import io
-    import json
     import tempfile
-    import time
     import zipfile
     from collections import defaultdict
-    from collections.abc import Generator
     from pathlib import Path
     from typing import Any
     from constants import SCAG_PARCELS_URL
+    from constants import CA_PARCELS_URL, HALF_MI_M, SCAG_OUT_FIELDS, ZONE_DENSITIES
+    from src.arcgis import fetch_from_arcgis
 
     import geopandas as gpd
     import numpy as np
@@ -34,7 +33,6 @@ with app.setup(hide_code=True):
     import requests
     import shapely
     from shapely import unary_union
-    from shapely.geometry import Polygon
     from typing import Optional
 
     import folium
@@ -44,110 +42,6 @@ with app.setup(hide_code=True):
     import matplotlib  # noqa: f401
 
     __generated_with = "0.23.5"
-    CA_PARCELS_URL = (
-        "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/"
-        "CA_Statewide_Parcels_Public_view/FeatureServer/0/query"
-    )
-
-    SCAG_OUT_FIELDS = (
-        "APN20,COUNTY,CITY,IL_RATIO,ZN19_CITY,ZN19_SCAG,TCAC_2024,"
-        "APPAREL1MI,EDUC1MI,GROCERY1MI,HOSPIT1MI,RESTAUR1MI,JOBS_30MIN,YEAR"
-    )
-
-    HALF_MI_M = 804.7  # 0.5 mile in metres
-
-    # Zone densities (du/ac) by buffer zone and Tier
-    ZONE_DENSITIES: dict[tuple[str, int], float] = {
-        ("200ft", 1): 160,
-        ("200ft", 2): 140,
-        ("qtr_mi", 1): 120,
-        ("qtr_mi", 2): 100,
-        ("half_mi", 1): 100,
-        ("half_mi", 2): 80,
-    }
-    print("https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip")
-
-    def shapely_to_esri_json(polygon: Polygon, wkid: int = 3857) -> dict | None:
-        """Convert a Shapely polygon to an ESRI JSON geometry object."""
-        if not polygon or polygon.is_empty:
-            return None
-        coords = list(polygon.exterior.coords)
-        rings = [[[x, y] for x, y in coords]]
-        return {"rings": rings, "spatialReference": {"wkid": wkid}}
-
-    def paginate_arcgis(
-        url: str,
-        geometry: str = None,
-        geometry_type: str = "esriGeometryPolygon",
-        spatial_rel: str = "esriSpatialRelIntersects",
-        in_sr: int = 3310,
-        out_fields: str = "*",
-        return_geometry: str = "true",
-        f: str = "geojson",
-        where: str = "1=1",
-        max_record_count: int = 2000,
-        delay: float = 0,
-    ) -> Generator[gpd.GeoDataFrame, None, None]:
-        """Paginate through an ArcGIS REST API query and yield GeoDataFrames."""
-        offset = 0
-        while True:
-            params = {
-                "geometry": geometry,
-                "geometryType": geometry_type,
-                "spatialRel": spatial_rel,
-                "inSR": str(in_sr),
-                "outFields": out_fields,
-                "returnGeometry": return_geometry,
-                "f": f,
-                "where": where,
-                "resultOffset": str(offset),
-                "resultRecordCount": str(max_record_count),
-            }
-            resp = requests.get(url, params=params)
-            resp.raise_for_status()
-            data = resp.json()
-            features = data.get("features", [])
-            if not features:
-                break
-            page = gpd.GeoDataFrame.from_features(features)
-            yield page
-            offset += max_record_count
-            time.sleep(delay)
-            if not data.get("properties", {}).get("exceededTransferLimit", False):
-                break
-
-    def fetch_from_arcgis(
-        url: str,
-        geometries: list[Polygon] = None,
-        out_fields: str = "*",
-        wkid: int = 3310,
-        max_record_count: int = 2000,
-        delay: float = 0,
-    ) -> gpd.GeoDataFrame:
-        """Query an ArcGIS parcel endpoint for multiple geometries and concatenate results."""
-        if geometries is None:
-            geometries = [None]
-        all_geometries: list[gpd.GeoDataFrame] = []
-        for geom in geometries:
-            esri_geom = shapely_to_esri_json(geom, wkid=wkid)
-            geometry_json = json.dumps(esri_geom) if esri_geom else None
-            for page in paginate_arcgis(
-                url=url,
-                geometry=geometry_json,
-                geometry_type="esriGeometryPolygon",
-                spatial_rel="esriSpatialRelIntersects",
-                in_sr=wkid,
-                out_fields=out_fields,
-                return_geometry="true",
-                f="geojson",
-                where="1=1",
-                max_record_count=max_record_count,
-                delay=delay,
-            ):
-                all_geometries.append(page)
-        if not all_geometries:
-            return gpd.GeoDataFrame()
-        return gpd.GeoDataFrame(pd.concat(all_geometries, ignore_index=True))
 
     def parse_gtfs_zip(
         gtfs_path: str | Path,

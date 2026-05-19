@@ -2,7 +2,7 @@ services:
   - type: web
     name: sb79-map
     runtime: python
-    buildCommand: pip install -e .
+    buildCommand: uv sync --frozen && uv cache prune --ci
     startCommand: marimo run notebooks/sb79map.py --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
