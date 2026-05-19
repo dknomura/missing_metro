@@ -6,7 +6,8 @@ import geopandas as gpd
 import pytest
 import responses
 from shapely.geometry import Polygon, box
-from src.arcgis import (
+
+from shared.api.arcgis import (
     fetch_from_arcgis,
     paginate_arcgis,
     shapely_to_esri_json,

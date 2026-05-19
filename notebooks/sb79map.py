@@ -12,206 +12,31 @@
 
 import marimo
 
+from shared.pipelines.sb79 import assign_tier_to_stops_from_gtfs
+
 __generated_with = "0.23.5"
 app = marimo.App()
 
 with app.setup(hide_code=True):
-    import csv  # noqa: I001
-    import io
     import tempfile
-    import zipfile
-    from collections import defaultdict
-    from pathlib import Path
-    from typing import Any
-    from constants import SCAG_PARCELS_URL
-    from constants import CA_PARCELS_URL, HALF_MI_M, SCAG_OUT_FIELDS, ZONE_DENSITIES
-    from src.arcgis import fetch_from_arcgis
+    from typing import Optional
 
+    import folium
     import geopandas as gpd
+    import mapclassify  # noqa: f401
+    import marimo as mo
+    import matplotlib  # noqa: f401
     import numpy as np
     import pandas as pd
     import requests
     import shapely
-    from shapely import unary_union
-    from typing import Optional
-
-    import folium
-    import marimo as mo
     from folium.plugins import MarkerCluster, VectorGridProtobuf
-    import mapclassify  # noqa: f401
-    import matplotlib  # noqa: f401
+    from shapely import unary_union
+
+    from shared.api.arcgis import fetch_from_arcgis
+    from shared.utils.constants import CA_PARCELS_URL, HALF_MI_M, SCAG_OUT_FIELDS, SCAG_PARCELS_URL, ZONE_DENSITIES
 
     __generated_with = "0.23.5"
-
-    def parse_gtfs_zip(
-        gtfs_path: str | Path,
-        tier_overrides: dict[str, int] | None = None,
-    ) -> gpd.GeoDataFrame:
-        """Parse a GTFS zip and return a GeoDataFrame of Tier-1/Tier-2 parent stations.
-
-        Parameters
-        ----------
-        gtfs_path:
-            Path to a ``.zip`` file containing standard GTFS tables.
-        tier_overrides:
-            Optional mapping ``{route_id: tier}`` to force a specific tier for
-            a route regardless of the automatic logic.
-
-        Returns
-        -------
-        gpd.GeoDataFrame
-            Only stops that qualify as Tier 1 or Tier 2 are returned.
-        """
-        z = zipfile.ZipFile(gtfs_path)
-
-        routes = list(csv.DictReader(io.StringIO(z.read("routes.txt").decode("utf-8"))))
-        route_info: dict[str, dict[str, Any]] = {}
-        for r in routes:
-            route_info[r["route_id"]] = r
-
-        cal = list(csv.DictReader(io.StringIO(z.read("calendar.txt").decode("utf-8"))))
-        weekday_services = {c["service_id"] for c in cal if c["monday"] == "1"}
-
-        trips = list(csv.DictReader(io.StringIO(z.read("trips.txt").decode("utf-8"))))
-        trip_to_route: dict[str, str] = {}
-        route_dir_counts: dict[str, dict[str, int]] = defaultdict(lambda: {"0": 0, "1": 0})
-        for t in trips:
-            trip_to_route[t["trip_id"]] = t["route_id"]
-            if t["service_id"] in weekday_services:
-                route_dir_counts[t["route_id"]][t["direction_id"]] += 1
-
-        num_wkday = len(weekday_services)
-
-        route_trains_per_day: dict[str, int] = {}
-        for rid, dirs in route_dir_counts.items():
-            route_trains_per_day[rid] = round((dirs.get("0", 0) + dirs.get("1", 0)) / num_wkday)
-
-        stops = list(csv.DictReader(io.StringIO(z.read("stops.txt").decode("utf-8"))))
-        stops_df = pd.DataFrame(stops)
-
-        parent_stations = stops_df[stops_df["location_type"] == "1"].copy()
-        boarding_stops = stops_df[stops_df["location_type"] == "0"].copy()
-
-        # If there are no parent stations (location_type=1), treat all boarding
-        # stops (location_type=0) as individual stations.  Some GTFS feeds
-        # (e.g. OC Streetcar) only have location_type=0 stops with no parent
-        # station hierarchy.
-        if parent_stations.empty:
-            parent_stations = boarding_stops.copy()
-            boarding_stops = gpd.GeoDataFrame()  # no routes to propagate
-
-        stop_times = list(csv.DictReader(io.StringIO(z.read("stop_times.txt").decode("utf-8"))))
-        stop_to_routes: dict[str, set[str]] = defaultdict(set)
-        for st in stop_times:
-            rid = trip_to_route.get(st["trip_id"])
-            if rid:
-                stop_to_routes[st["stop_id"]].add(rid)
-
-        parent_to_routes: dict[str, set[str]] = defaultdict(set)
-        for _, bs in boarding_stops.iterrows():
-            parent = bs["parent_station"] if "parent_station" in bs else None
-            if parent and parent in set(parent_stations["stop_id"]):
-                parent_to_routes[parent].update(stop_to_routes.get(bs["stop_id"], set()))
-
-        for _, ps in parent_stations.iterrows():
-            parent_to_routes[ps["stop_id"]].update(stop_to_routes.get(ps["stop_id"], set()))
-
-        # --- Build the output GeoDataFrame ---
-        records: list[dict[str, Any]] = []
-        for _, ps in parent_stations.iterrows():
-            pid = ps["stop_id"]
-            served_routes = sorted(parent_to_routes.get(pid, set()))
-            if not served_routes:
-                continue
-
-            # Collect route types and count arrivals
-            types: set[str] = set()
-            total_arrivals = 0
-            agencies: set[str] = set()
-            for rid in served_routes:
-                ri = route_info.get(rid, {})
-                types.add(ri.get("route_type", ""))
-                total_arrivals += route_trains_per_day.get(rid, 0)
-                agencies.add(ri.get("agency_id", ""))
-
-            routetypes_str = ",".join(sorted(types, key=int))
-
-            # Tier assignment
-            has_type_1 = "1" in types
-            has_type_0 = "0" in types
-            has_type_2 = "2" in types
-
-            tier: int | None = None
-            if has_type_1:
-                tier = 1
-            elif (has_type_0 or has_type_2) and total_arrivals >= 72:
-                tier = 1
-            elif has_type_2 and 48 <= total_arrivals < 72:
-                tier = 2
-            elif has_type_0 and total_arrivals < 72:
-                tier = 2
-
-            # Apply overrides
-            if tier_overrides:
-                for rid in served_routes:
-                    if rid in tier_overrides:
-                        tier = tier_overrides[rid]
-                        break
-
-            if tier is None:
-                continue  # skip stops that don't qualify
-
-            records.append(
-                {
-                    "stop_id": pid,
-                    "stop_name": ps.get("stop_name", ""),
-                    "stop_lat": float(ps["stop_lat"]),
-                    "stop_lon": float(ps["stop_lon"]),
-                    "Tier": tier,
-                    "agency": ",".join(sorted(agencies)),
-                    "route_ids_served": ",".join(served_routes),
-                    "routetypes": routetypes_str,
-                    "n_arrivals": total_arrivals,
-                }
-            )
-
-        if not records:
-            return gpd.GeoDataFrame(
-                {
-                    "stop_id": pd.Series(dtype=str),
-                    "stop_name": pd.Series(dtype=str),
-                    "Tier": pd.Series(dtype=int),
-                    "agency": pd.Series(dtype=str),
-                    "route_ids_served": pd.Series(dtype=str),
-                    "routetypes": pd.Series(dtype=str),
-                    "n_arrivals": pd.Series(dtype=int),
-                },
-                geometry=pd.Series(dtype=object),
-                crs="EPSG:4326",
-            )
-
-        result = gpd.GeoDataFrame(
-            records,
-            geometry=gpd.points_from_xy(
-                [r["stop_lon"] for r in records],
-                [r["stop_lat"] for r in records],
-                crs="EPSG:4326",
-            ),
-        )
-        result.drop(columns=["stop_lat", "stop_lon"], inplace=True)
-        return result
-
-    def create_half_mi_buffers(stops_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-        """Create 0.5-mile (804.7 m) circular buffers around each stop.
-
-        Returns a GeoDataFrame in EPSG:3310 with the same ``stop_id`` index.
-        """
-        buffers = gpd.GeoDataFrame(
-            {"stop_id": stops_gdf["stop_id"].values},
-            geometry=stops_gdf.to_crs("EPSG:3310").geometry.buffer(HALF_MI_M, resolution=8),
-            crs="EPSG:3310",
-        )
-        return buffers
 
     def fetch_scag_parcels(
         buffers_gdf: gpd.GeoDataFrame,
@@ -710,77 +535,6 @@ with app.setup(hide_code=True):
 
         return result
 
-    def full_pipeline(
-        gtfs_zip_path: str | Path,
-        tier_overrides: dict[str, int] | None = None,
-        out_path: str | Path | None = None,
-        scag_url: str = SCAG_PARCELS_URL,
-        ca_url: str = CA_PARCELS_URL,
-        scag_out_fields: str = SCAG_OUT_FIELDS,
-    ) -> dict[str, gpd.GeoDataFrame]:
-        """Run the complete GTFS-to-parcels pipeline.
-
-        Parameters
-        ----------
-        gtfs_zip_path:
-            Path to a GTFS ``.zip`` file.
-        tier_overrides:
-            Optional ``{route_id: tier}`` overrides.
-        out_path:
-            If provided, save stops and parcels to GeoJSON files here.
-        scag_url:
-            SCAG parcel endpoint URL.
-        ca_url:
-            CA statewide parcel endpoint URL.
-        scag_out_fields:
-            Fields to request from the SCAG endpoint.
-
-        Returns
-        -------
-        dict
-            ``{"stops": stops_gdf, "parcels": ca_parcels_output}``
-        """
-        print("=== Step 1: Parse GTFS ===")
-        stops = parse_gtfs_zip(gtfs_zip_path, tier_overrides=tier_overrides)
-        print(f"  {len(stops)} stops with Tier 1 or 2")
-
-        print("=== Step 2: Create 0.5-mi buffers ===")
-        buffers = create_half_mi_buffers(stops)
-
-        print("=== Step 3: Fetch SCAG parcels ===")
-        scag = fetch_scag_parcels(buffers, url=scag_url, out_fields=scag_out_fields)
-        print(f"  {len(scag)} SCAG parcels")
-
-        print("=== Step 4: Compute SCAG density ===")
-        scag_density = compute_scag_density(scag)
-
-        print("=== Step 5: Create buffer donuts & weighted density ===")
-        scag_by_apn = create_buffer_donuts(stops, scag_density)
-
-        print("=== Step 6: Fetch CA parcels ===")
-        ca = fetch_ca_parcels(buffers, url=ca_url)
-        print(f"  {len(ca)} CA parcels")
-
-        print("=== Step 7: Join SCAG → CA parcels ===")
-        combined = join_scag_ca_parcels(scag_by_apn, ca)
-
-        print("=== Step 8: Trim to 0.5-mi buffer & assign nearest stop ===")
-        parcels_with_stops = assign_nearest_stop(combined, stops, buffers)
-
-        print("=== Step 9: Aggregate parcels to stops ===")
-        stops_result = aggregate_parcels_to_stops(parcels_with_stops, stops)
-
-        result = {"stops": stops_result, "parcels": combined}
-
-        if out_path:
-            out = Path(out_path)
-            out.mkdir(parents=True, exist_ok=True)
-            stops_result.to_file(out / "stops.geojson", driver="GeoJSON")
-            combined.to_file(out / "parcels.geojson", driver="GeoJSON")
-            print(f"  Saved to {out}")
-
-        return result
-
     PARCELS_URL = "https://vectortileservices3.arcgis.com/NaFf4UaPo3IgQXqn/arcgis/rest/services/sb79_transit_parcels/VectorTileServer/tile/{z}/{y}/{x}.pbf"
     STOPS_URL = (
         "https://services3.arcgis.com/NaFf4UaPo3IgQXqn/ArcGIS/rest/services/sb79_transit_stations/FeatureServer/0/query"
@@ -840,7 +594,7 @@ def _(file_input, url_input):
         tmp.flush()  # Ensure data is written to disk
 
         # Optional: Read back from the start
-        new_stops = parse_gtfs_zip(tmp.name, tier_overrides={"route-mourbghe-3": 2})
+        new_stops = assign_tier_to_stops_from_gtfs(tmp.name, tier_overrides={"route-mourbghe-3": 2})
     return (new_stops,)
 
 
@@ -873,7 +627,11 @@ def _(new_stops, prestops_gdf):
 
 @app.cell
 def _(new_stops):
-    buffers = create_half_mi_buffers(new_stops)
+    buffers = gpd.GeoDataFrame(
+        {"stop_id": new_stops["stop_id"].values},
+        geometry=new_stops.to_crs("EPSG:3310").geometry.buffer(HALF_MI_M, resolution=8),
+        crs="EPSG:3310",
+    )
     buffers.explore(tiles="CartoDB positron")
     return (buffers,)
 

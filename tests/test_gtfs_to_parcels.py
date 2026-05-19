@@ -8,17 +8,18 @@ from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pytest
-from sb79map import (
+from shapely.geometry import Point, box
+
+from notebooks.sb79map import (
     aggregate_parcels_to_stops,
     assign_nearest_stop,
     compute_scag_density,
     create_buffer_donuts,
-    create_half_mi_buffers,
     join_scag_ca_parcels,
-    parse_gtfs_zip,
     trim_around_stations,
 )
-from shapely.geometry import Point, box
+from shared.pipelines.sb79 import assign_tier_to_stops_from_gtfs
+from shared.utils.constants import HALF_MI_M
 
 
 def _make_gtfs_zip(
@@ -77,6 +78,15 @@ def _make_stops_gdf(stops_data: list[dict]) -> gpd.GeoDataFrame:
             }
         )
     return gpd.GeoDataFrame(records, crs="EPSG:4326")
+
+
+def _make_half_mi_buffer_gdf(stops: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Create a GeoDataFrame of half-mile buffers around stops."""
+    return gpd.GeoDataFrame(
+        {"stop_id": stops["stop_id"].values},
+        geometry=stops.to_crs("EPSG:3310").geometry.buffer(HALF_MI_M, resolution=8),
+        crs="EPSG:3310",
+    )
 
 
 def _make_parcels_gdf(parcels_data: list[dict]) -> gpd.GeoDataFrame:
@@ -140,7 +150,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             assert result.iloc[0]["stop_id"] == "801S"
             assert result.iloc[0]["Tier"] == 1  # subway → Tier 1
@@ -175,7 +185,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             # 80 trips / 1 weekday service = 80/day >= 72 → Tier 1
             assert result.iloc[0]["Tier"] == 1
@@ -209,7 +219,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             # 400 trips / 5 days = 80/day >= 72 → Tier 1
             assert result.iloc[0]["Tier"] == 1
@@ -243,7 +253,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             # 20 trips / 5 = 4/day < 72 → Tier 2
             assert result.iloc[0]["Tier"] == 2
@@ -291,7 +301,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             # 120 trips / 2 weekday services = 60/day, 48 <= 60 < 72 → Tier 2
             assert result.iloc[0]["Tier"] == 2
@@ -326,7 +336,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path, tier_overrides={"801": 2})
+            result = assign_tier_to_stops_from_gtfs(path, tier_overrides={"801": 2})
             assert len(result) == 1
             assert result.iloc[0]["Tier"] == 2  # overridden
         finally:
@@ -360,7 +370,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 0  # no Tier 1 or 2 stops
         finally:
             path.unlink(missing_ok=True)
@@ -407,7 +417,7 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             assert result.iloc[0]["stop_id"] == "S1"
             assert result.iloc[0]["Tier"] == 2  # route_type=0, 2 trips/5=0.4/day < 72
@@ -450,34 +460,12 @@ class TestParseGtfsZip:
 
         path.write_bytes(gtfs_bytes)
         try:
-            result = parse_gtfs_zip(path)
+            result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             assert result.iloc[0]["Tier"] == 1  # has route_type 1
             assert "1" in result.iloc[0]["routetypes"]
         finally:
             path.unlink(missing_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Tests: create_half_mi_buffers
-# ---------------------------------------------------------------------------
-
-
-class TestCreateHalfMiBuffers:
-    def test_basic(self):
-        stops = _make_stops_gdf(
-            [
-                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
-            ]
-        )
-        buffers = create_half_mi_buffers(stops)
-        assert len(buffers) == 1
-        assert buffers.crs.to_string() == "EPSG:3310"
-        # Buffer should be a polygon, not a point
-        assert buffers.geometry.iloc[0].geom_type in ("Polygon", "MultiPolygon")
-        # Area should be roughly pi * 804.7^2 ≈ 2,034,000 m²
-        area = buffers.geometry.iloc[0].area
-        assert 1_900_000 < area < 2_100_000
 
 
 # ---------------------------------------------------------------------------
@@ -627,7 +615,7 @@ class TestAssignNearestStop:
                 {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
             ]
         )
-        buffers = create_half_mi_buffers(stops)
+        buffers = _make_half_mi_buffer_gdf(stops)
         parcels = gpd.GeoDataFrame(
             {"PARCEL_APN": ["1"]},
             geometry=[Point(-118.0005, 34.0005).buffer(0.001)],
@@ -646,7 +634,7 @@ class TestAssignNearestStop:
                 {"stop_id": "B", "Tier": 1, "lat": 34.01, "lon": -118.0},
             ]
         )
-        buffers = create_half_mi_buffers(stops)
+        buffers = _make_half_mi_buffer_gdf(stops)
         # Parcel closer to stop A
         parcels = gpd.GeoDataFrame(
             {"PARCEL_APN": ["1"]},
