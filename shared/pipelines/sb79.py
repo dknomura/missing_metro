@@ -16,12 +16,12 @@ def assign_tier_to_stops_from_gtfs(
     """Parse a GTFS zip and return a GeoDataFrame of Tier-1/Tier-2 parent stations."""
     feed = gtfs_kit.read_feed(gtfs_path, dist_units="km")
 
-    if not feed.get_first_week():
+    result_df = parent_stations_from_gtfs(feed)
+    if result_df.empty:
         return _empty_result()
 
     result_df = (
-        parent_stations_from_gtfs(feed)
-        .assign(
+        result_df.assign(
             n_arrivals=lambda df: df["n_arrivals"].fillna(0).astype(int),
             served_routes=lambda df: df["route_ids"].map(sorted),
             Tier=lambda df: pd.Series(pd.NA, index=df.index).case_when(
@@ -129,7 +129,6 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         ]
     )
 
-    # --- Non-LA / fallback density: map ZN19_SCAG codes → du/ac ---
     zn19_scag = df["ZN19_SCAG"].astype(str)
     area_acres = df.to_crs("EPSG:2229").area / 43560
     scag_density = zn19_scag.case_when(
@@ -157,7 +156,6 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         ]
     )
 
-    # For LA parcels: use ZN19_CITY density if matched, otherwise fall through to SCAG
     is_la = df["CITY"] == "Los Angeles"
 
     df["current_density_du_per_ac"] = scag_density

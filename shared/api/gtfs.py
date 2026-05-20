@@ -2,10 +2,47 @@ import gtfs_kit
 import pandas as pd
 
 
-def parent_stations_from_gtfs(feed: gtfs_kit.Feed) -> pd.DataFrame:
-    """Return a DataFrame of parent stations with aggregated route info and trip counts."""
-    trip_counts = feed.compute_stop_stats([feed.get_first_week()[0]])[["stop_id", "num_trips"]].assign(
-        num_trips=lambda df: df["num_trips"].astype(int)
+def parent_stations_from_gtfs(
+    feed: gtfs_kit.Feed,
+    days_of_week: list[int] | None = None,
+) -> pd.DataFrame:
+    """Return a DataFrame of parent stations with aggregated route info and trip counts.
+
+    Parameters
+    ----------
+    feed : gtfs_kit.Feed
+        A GTFS feed object.
+    days_of_week : list[int] | None, optional
+        Days of the week to include, where 0=Monday, 6=Sunday.
+        If None (default), all days in the feed's calendar are used.
+        Examples: [0,1,2,3,4] for weekdays, [5,6] for weekends.
+
+    Returns
+    -------
+    pd.DataFrame
+        Parent stations with columns: stop_id, stop_name, stop_lat, stop_lon,
+        route_ids, route_types, agencies, n_arrivals (avg trips/day).
+    """
+    all_dates = feed.get_dates(as_date_obj=True)
+    if days_of_week is not None:
+        all_dates = [d for d in all_dates if d.weekday() in days_of_week]
+    if not all_dates:
+        return pd.DataFrame()
+
+    date_strings = [d.strftime("%Y%m%d") for d in all_dates]
+
+    stop_stats = feed.compute_stop_stats(date_strings)[["date", "stop_id", "num_trips"]]
+
+    n_active_dates = stop_stats["date"].nunique()
+    if n_active_dates == 0:
+        return pd.DataFrame()
+
+    trip_counts = (
+        stop_stats.assign(num_trips=lambda df: df["num_trips"].astype(int))
+        .groupby("stop_id")["num_trips"]
+        .sum()
+        .div(n_active_dates)
+        .reset_index(name="num_trips")
     )
 
     stop_info = (
