@@ -121,8 +121,8 @@ class TestParseGtfsZip:
                 {"route_id": "801", "trip_id": "t2", "service_id": "wk", "direction_id": "1"},
             ],
             stop_times=[
-                {"trip_id": "t1", "stop_id": "801S"},
-                {"trip_id": "t2", "stop_id": "801S"},
+                {"trip_id": "t1", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"},
+                {"trip_id": "t2", "stop_id": "801S", "arrival_time": "08:05:00", "departure_time": "08:06:00"},
             ],
             stops=[
                 {
@@ -143,6 +143,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -164,7 +166,10 @@ class TestParseGtfsZip:
             routes=[{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
             trips=[{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(40)]
             + [{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(40, 80)],
-            stop_times=[{"trip_id": f"t{i}", "stop_id": "801S"} for i in range(80)],
+            stop_times=[
+                {"trip_id": f"t{i}", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
+                for i in range(80)
+            ],
             stops=[
                 {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
@@ -178,6 +183,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -198,7 +205,10 @@ class TestParseGtfsZip:
             routes=[{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
             trips=[{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(200)]
             + [{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(200, 400)],
-            stop_times=[{"trip_id": f"t{i}", "stop_id": "801S"} for i in range(400)],
+            stop_times=[
+                {"trip_id": f"t{i}", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
+                for i in range(400)
+            ],
             stops=[
                 {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
@@ -212,6 +222,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -232,7 +244,10 @@ class TestParseGtfsZip:
             routes=[{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
             trips=[{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(10)]
             + [{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(10, 20)],
-            stop_times=[{"trip_id": f"t{i}", "stop_id": "801S"} for i in range(20)],
+            stop_times=[
+                {"trip_id": f"t{i}", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
+                for i in range(20)
+            ],
             stops=[
                 {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
@@ -246,6 +261,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -262,21 +279,22 @@ class TestParseGtfsZip:
 
     def test_tier2_commuter_rail_medium(self):
         """route_type=2 with 48 <= n_arrivals < 72 → Tier 2."""
-        # Use 2 weekday services so 300 trips / 2 = 150/day... still >= 72
-        # Need fewer trips: 120 trips / 2 services = 60/day, 48 <= 60 < 72 → Tier 2
+        # gtfs_kit counts all trips across all services active on the weekday.
+        # Use 60 trips with a single service: 48 <= 60 < 72 → Tier 2
         gtfs_bytes = _make_gtfs_zip(
             routes=[{"route_id": "701", "route_type": "2", "agency_id": "metrolink"}],
-            trips=[{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk1", "direction_id": "0"} for i in range(30)]
-            + [{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk2", "direction_id": "0"} for i in range(30, 60)]
-            + [{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk1", "direction_id": "1"} for i in range(60, 90)]
-            + [{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk2", "direction_id": "1"} for i in range(90, 120)],
-            stop_times=[{"trip_id": f"t{i}", "stop_id": "701S"} for i in range(120)],
+            trips=[{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(30)]
+            + [{"route_id": "701", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(30, 60)],
+            stop_times=[
+                {"trip_id": f"t{i}", "stop_id": "701S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
+                for i in range(60)
+            ],
             stops=[
                 {"stop_id": "701S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
             calendar=[
                 {
-                    "service_id": "wk1",
+                    "service_id": "wk",
                     "monday": "1",
                     "tuesday": "1",
                     "wednesday": "1",
@@ -284,16 +302,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
-                },
-                {
-                    "service_id": "wk2",
-                    "monday": "1",
-                    "tuesday": "1",
-                    "wednesday": "1",
-                    "thursday": "1",
-                    "friday": "1",
-                    "saturday": "0",
-                    "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 },
             ],
         )
@@ -303,7 +313,7 @@ class TestParseGtfsZip:
         try:
             result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
-            # 120 trips / 2 weekday services = 60/day, 48 <= 60 < 72 → Tier 2
+            # 60 trips, 48 <= 60 < 72 → Tier 2
             assert result.iloc[0]["Tier"] == 2
         finally:
             path.unlink(missing_ok=True)
@@ -315,7 +325,7 @@ class TestParseGtfsZip:
             trips=[
                 {"route_id": "801", "trip_id": "t1", "service_id": "wk", "direction_id": "0"},
             ],
-            stop_times=[{"trip_id": "t1", "stop_id": "801S"}],
+            stop_times=[{"trip_id": "t1", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}],
             stops=[
                 {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
@@ -329,6 +339,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -349,7 +361,7 @@ class TestParseGtfsZip:
             trips=[
                 {"route_id": "901", "trip_id": "t1", "service_id": "wk", "direction_id": "0"},
             ],
-            stop_times=[{"trip_id": "t1", "stop_id": "901S"}],
+            stop_times=[{"trip_id": "t1", "stop_id": "901S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}],
             stops=[
                 {"stop_id": "901S", "stop_name": "Bus Stop", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
             ],
@@ -363,6 +375,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -388,8 +402,8 @@ class TestParseGtfsZip:
                 {"route_id": "801", "trip_id": "t2", "service_id": "wk", "direction_id": "1"},
             ],
             stop_times=[
-                {"trip_id": "t1", "stop_id": "S1"},
-                {"trip_id": "t2", "stop_id": "S1"},
+                {"trip_id": "t1", "stop_id": "S1", "arrival_time": "08:00:00", "departure_time": "08:01:00"},
+                {"trip_id": "t2", "stop_id": "S1", "arrival_time": "08:05:00", "departure_time": "08:06:00"},
             ],
             stops=[
                 {
@@ -410,6 +424,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
@@ -437,8 +453,8 @@ class TestParseGtfsZip:
                 {"route_id": "802", "trip_id": "t2", "service_id": "wk", "direction_id": "0"},
             ],
             stop_times=[
-                {"trip_id": "t1", "stop_id": "801S"},
-                {"trip_id": "t2", "stop_id": "801S"},
+                {"trip_id": "t1", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"},
+                {"trip_id": "t2", "stop_id": "801S", "arrival_time": "08:05:00", "departure_time": "08:06:00"},
             ],
             stops=[
                 {"stop_id": "801S", "stop_name": "Mixed", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
@@ -453,6 +469,8 @@ class TestParseGtfsZip:
                     "friday": "1",
                     "saturday": "0",
                     "sunday": "0",
+                    "start_date": "20250101",
+                    "end_date": "20251231",
                 }
             ],
         )
