@@ -70,7 +70,7 @@ class TestParseGtfsZip:
             assert len(result) == 1
             assert result.iloc[0]["stop_id"] == "801S"
             assert result.iloc[0]["Tier"] == 1  # subway → Tier 1
-            assert result.iloc[0]["routetypes"] == "1"
+            assert result.iloc[0]["route_types"] == "1"
         finally:
             path.unlink(missing_ok=True)
 
@@ -437,6 +437,6 @@ class TestParseGtfsZip:
             result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
             assert result.iloc[0]["Tier"] == 1  # has route_type 1
-            assert "1" in result.iloc[0]["routetypes"]
+            assert "1" in result.iloc[0]["route_types"]
         finally:
             path.unlink(missing_ok=True)

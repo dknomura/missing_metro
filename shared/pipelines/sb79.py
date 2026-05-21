@@ -16,39 +16,53 @@ def assign_tier_to_stops_from_gtfs(
     """Parse a GTFS zip and return a GeoDataFrame of Tier-1/Tier-2 parent stations."""
     feed = gtfs_kit.read_feed(gtfs_path, dist_units="km")
 
-    result_df = parent_stations_from_gtfs(feed)
+    result_df = parent_stations_from_gtfs(feed, days_of_week=[0, 1, 2, 3, 4])
     if result_df.empty:
         return _empty_result()
 
-    result_df = (
-        result_df.assign(
-            n_arrivals=lambda df: df["n_arrivals"].fillna(0).astype(int),
-            served_routes=lambda df: df["route_ids"].map(sorted),
-            Tier=lambda df: pd.Series(pd.NA, index=df.index).case_when(
-                [
-                    (df["route_types"].map(lambda t: "1" in t), 1),
-                    (df["route_types"].map(lambda t: "0" in t or "2" in t) & (df["n_arrivals"] >= 72), 1),
-                    (df["route_types"].map(lambda t: "2" in t) & df["n_arrivals"].between(48, 71), 2),
-                    (df["route_types"].map(lambda t: "0" in t) & (df["n_arrivals"] < 72), 2),
-                ]
-            ),
-        )
-        .dropna(subset=["Tier"])
-        .assign(
-            Tier=lambda df: df["Tier"].astype(int),
-            agency=lambda df: df["agencies"].map(lambda s: ",".join(sorted(s))),
-            route_ids_served=lambda df: df["served_routes"].map(",".join),
-            routetypes=lambda df: df["route_types"].map(lambda s: ",".join(sorted(s, key=int))),
-        )[["stop_id", "stop_name", "stop_lat", "stop_lon", "Tier", "agency", "route_ids_served", "routetypes", "n_arrivals"]]
+    result_df["total_train_arrivals"] = result_df.apply(
+        lambda row: sum(
+            float(na) for rt, na in zip(row["route_types"], row["n_arrivals"], strict=False) if int(rt) in (0, 1, 2)
+        ),
+        axis=1,
     )
 
-    if result_df.empty:
-        return _empty_result()
+    has_subway = result_df["route_types"].apply(lambda rts: "1" in rts)
+    has_commuter = result_df["route_types"].apply(lambda rts: "2" in rts)
+    has_light_rail = result_df["route_types"].apply(lambda rts: "0" in rts)
+
+    result_df["Tier"] = None
+    result_df.loc[has_subway, "Tier"] = 1
+    result_df.loc[
+        (has_commuter | has_light_rail) & (result_df["total_train_arrivals"] >= 72),
+        "Tier",
+    ] = 1
+
+    result_df.loc[
+        result_df["Tier"].isna() & has_commuter & (result_df["total_train_arrivals"].between(48, 71, inclusive="both")),
+        "Tier",
+    ] = 2
+
+    result_df.loc[
+        result_df["Tier"].isna() & has_light_rail & (result_df["total_train_arrivals"] < 72),
+        "Tier",
+    ] = 2
 
     if tier_overrides:
         for rid, tier in tier_overrides.items():
-            mask = result_df["route_ids_served"].str.contains(rid, regex=False)
+            mask = result_df["route_ids"].apply(lambda rts, rid=rid: rid in rts)
             result_df.loc[mask, "Tier"] = tier
+
+    result_df = result_df.dropna(subset=["Tier"]).assign(
+        Tier=lambda df: df["Tier"].astype(int),
+        n_arrivals=lambda df: df["total_train_arrivals"],
+        agencies=lambda df: df["agencies"].apply(lambda ags: ",".join(ags)),
+        route_ids=lambda df: df["route_ids"].apply(lambda rids: ",".join(rids)),
+        route_types=lambda df: df["route_types"].apply(lambda rts: ",".join(rts)),
+    )[["stop_id", "stop_name", "stop_lat", "stop_lon", "agencies", "route_ids", "route_types", "Tier", "n_arrivals"]]
+
+    if result_df.empty:
+        return _empty_result()
 
     return gpd.GeoDataFrame(
         result_df,
@@ -63,9 +77,9 @@ def _empty_result() -> gpd.GeoDataFrame:
             "stop_id": pd.Series(dtype=str),
             "stop_name": pd.Series(dtype=str),
             "Tier": pd.Series(dtype=int),
-            "agency": pd.Series(dtype=str),
-            "route_ids_served": pd.Series(dtype=str),
-            "routetypes": pd.Series(dtype=str),
+            "agencies": pd.Series(dtype=str),
+            "route_ids": pd.Series(dtype=str),
+            "route_types": pd.Series(dtype=str),
             "n_arrivals": pd.Series(dtype=int),
         },
         geometry=pd.Series(dtype=object),

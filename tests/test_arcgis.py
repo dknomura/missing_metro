@@ -25,7 +25,6 @@ class TestShapelyToEsriJson:
         assert "rings" in result
         assert "spatialReference" in result
         assert result["spatialReference"]["wkid"] == 3310
-        # The exterior ring should have 5 coordinates (closed ring)
         assert len(result["rings"][0]) == 5
 
     def test_empty_polygon(self):
@@ -239,7 +238,6 @@ class TestFetchAllParcels:
             delay=0,
         )
 
-        # Two geometries, each returning one feature = 2 rows
         assert len(result) == 2
 
     @responses.activate

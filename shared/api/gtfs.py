@@ -6,7 +6,7 @@ def parent_stations_from_gtfs(
     feed: gtfs_kit.Feed,
     days_of_week: list[int] | None = None,
 ) -> pd.DataFrame:
-    """Return a DataFrame of parent stations with aggregated route info and trip counts.
+    """Return a DataFrame of parent stations with per-route aggregated info.
 
     Parameters
     ----------
@@ -21,7 +21,8 @@ def parent_stations_from_gtfs(
     -------
     pd.DataFrame
         Parent stations with columns: stop_id, stop_name, stop_lat, stop_lon,
-        route_ids, route_types, agencies, n_arrivals (avg trips/day).
+        route_ids (list), route_types (list), agencies (list),
+        n_arrivals (list of avg trips/day per route, parallel to route_ids).
     """
     all_dates = feed.get_dates(as_date_obj=True)
     if days_of_week is not None:
@@ -31,30 +32,45 @@ def parent_stations_from_gtfs(
 
     date_strings = [d.strftime("%Y%m%d") for d in all_dates]
 
-    stop_stats = feed.compute_stop_stats(date_strings)[["date", "stop_id", "num_trips"]]
+    # Get trip activity (which trips are active on which dates)
+    activity = feed.compute_trip_activity(date_strings)
 
-    n_active_dates = stop_stats["date"].nunique()
-    if n_active_dates == 0:
-        return pd.DataFrame()
+    # Melt activity into long format: trip_id, date, active
+    activity_long = activity.melt(
+        id_vars=["trip_id"],
+        var_name="date",
+        value_name="active",
+    )
 
-    trip_counts = (
-        stop_stats.assign(num_trips=lambda df: df["num_trips"].astype(int))
-        .groupby("stop_id")["num_trips"]
-        .sum()
-        .div(n_active_dates)
+    # Keep only active trips and join with stop_times -> trips -> routes
+    active_trips = activity_long[activity_long["active"] > 0]
+
+    # Count trips per stop_id per route per date
+    route_trip_counts = (
+        active_trips[["trip_id", "date"]]
+        .merge(feed.stop_times[["trip_id", "stop_id"]], on="trip_id")
+        .merge(feed.trips[["trip_id", "route_id"]], on="trip_id")
+        .merge(
+            feed.routes[["route_id", "route_type", "agency_id"]],
+            on="route_id",
+        )
+        .groupby(["stop_id", "route_id", "route_type", "agency_id", "date"])
+        .size()
         .reset_index(name="num_trips")
     )
 
-    stop_info = (
-        feed.stop_times.merge(feed.trips[["trip_id", "route_id"]], on="trip_id")
-        .merge(feed.routes[["route_id", "route_type", "agency_id"]], on="route_id")
-        .groupby("stop_id")
-        .agg(
-            route_ids=("route_id", lambda x: set(x)),
-            route_types=("route_type", lambda x: set(str(t) for t in x)),
-            agencies=("agency_id", lambda x: set(x)),
-        )
+    if route_trip_counts.empty:
+        return pd.DataFrame()
+
+    # Sum trips across all stops for the same route on each date,
+    # then average across active dates to get avg trips/day per route.
+    route_avg = (
+        route_trip_counts.groupby(["route_id", "route_type", "agency_id", "date"])["num_trips"]
+        .sum()
         .reset_index()
+        .groupby(["route_id", "route_type", "agency_id"])["num_trips"]
+        .mean()
+        .reset_index(name="avg_trips")
     )
 
     stops_df = feed.stops
@@ -65,26 +81,31 @@ def parent_stations_from_gtfs(
         parent_stations = boarding_stops.copy()
         boarding_stops = pd.DataFrame()
 
-    self_rows = parent_stations[["stop_id"]].assign(parent_id=parent_stations["stop_id"])
-    child_rows = (
+    # Build stop -> parent_id mapping
+    self_map = parent_stations[["stop_id"]].assign(parent_id=parent_stations["stop_id"])
+    child_map = (
         boarding_stops.dropna(subset=["parent_station"])[["stop_id", "parent_station"]].rename(
             columns={"parent_station": "parent_id"}
         )
         if not boarding_stops.empty
         else pd.DataFrame(columns=["stop_id", "parent_id"])
     )
-    membership = pd.concat([self_rows, child_rows], ignore_index=True)
+    stop_to_parent = pd.concat([self_map, child_map], ignore_index=True)
 
+    # Map each stop to its parent, deduplicate by (parent_id, route_id),
+    # then aggregate into parallel lists per parent station.
     parent_route_info = (
-        membership.merge(stop_info, on="stop_id", how="left")
-        .merge(trip_counts, on="stop_id", how="left")
-        .dropna(subset=["route_ids"])
+        route_trip_counts[["stop_id", "route_id", "route_type", "agency_id"]]
+        .drop_duplicates()
+        .merge(stop_to_parent, on="stop_id")
+        .merge(route_avg, on=["route_id", "route_type", "agency_id"])
+        .drop_duplicates(subset=["parent_id", "route_id"])
         .groupby("parent_id")
         .agg(
-            route_ids=("route_ids", lambda x: set().union(*x)),
-            route_types=("route_types", lambda x: set().union(*x)),
-            agencies=("agencies", lambda x: set().union(*x)),
-            n_arrivals=("num_trips", "sum"),
+            route_ids=("route_id", list),
+            route_types=("route_type", lambda x: [str(t) for t in x]),
+            agencies=("agency_id", list),
+            n_arrivals=("avg_trips", list),
         )
         .reset_index()
         .rename(columns={"parent_id": "stop_id"})
