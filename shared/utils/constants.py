@@ -9,11 +9,4 @@ SCAG_OUT_FIELDS = (
 )
 HALF_MI_M = 804.7
 
-ZONE_DENSITIES: dict[tuple[str, int], float] = {
-    ("200ft", 1): 160,
-    ("200ft", 2): 140,
-    ("qtr_mi", 1): 120,
-    ("qtr_mi", 2): 100,
-    ("half_mi", 1): 100,
-    ("half_mi", 2): 80,
-}
+SCAG_FT_CSR = "EPSG:2229"

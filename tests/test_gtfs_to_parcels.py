@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import geopandas as gpd
-import numpy as np
-import pytest
 from shapely.geometry import Point, box
 
 from notebooks.sb79map import (
@@ -10,25 +8,9 @@ from notebooks.sb79map import (
     assign_nearest_stop,
     create_buffer_donuts,
     join_scag_ca_parcels,
-    trim_around_stations,
 )
-from shared.pipelines.sb79 import compute_scag_density
 from shared.utils.constants import HALF_MI_M
-
-
-def _make_stops_gdf(stops_data: list[dict]) -> gpd.GeoDataFrame:
-    """Create a stops GeoDataFrame from a list of dicts."""
-    records = []
-    for s in stops_data:
-        records.append(
-            {
-                "stop_id": s["stop_id"],
-                "stop_name": s.get("stop_name", ""),
-                "Tier": s["Tier"],
-                "geometry": Point(s["lon"], s["lat"]),
-            }
-        )
-    return gpd.GeoDataFrame(records, crs="EPSG:4326")
+from tests.test_helpers import _make_parcels_gdf, _make_stops_gdf
 
 
 def _make_half_mi_buffer_gdf(stops: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -40,103 +22,14 @@ def _make_half_mi_buffer_gdf(stops: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
 
-def _make_parcels_gdf(parcels_data: list[dict]) -> gpd.GeoDataFrame:
-    """Create a parcels GeoDataFrame from a list of dicts."""
-    records = []
-    for p in parcels_data:
-        rec = {
-            "APN20": p["APN20"],
-            "current_density_du_per_ac": p.get("current_density_du_per_ac", 0),
-            "ZN19_CITY": p.get("ZN19_CITY", ""),
-            "ZN19_SCAG": p.get("ZN19_SCAG", 0),
-            "CITY": p.get("CITY", ""),
-            "COUNTY": p.get("COUNTY", ""),
-            "Tier": p.get("Tier", 1),
-            "geometry": box(*p["bbox"]),
-        }
-        # Include any extra columns passed in the dict
-        for k, v in p.items():
-            if k not in rec and k != "bbox":
-                rec[k] = v
-        records.append(rec)
-    return gpd.GeoDataFrame(records, crs="EPSG:4326")
-
-
 # ---------------------------------------------------------------------------
 # Tests: compute_scag_density
 # ---------------------------------------------------------------------------
 
 
-class TestComputeScagDensity:
-    def test_la_density(self):
-        parcels = _make_parcels_gdf(
-            [
-                {"APN20": "1", "ZN19_CITY": "RD1.5", "CITY": "Los Angeles", "bbox": (0, 0, 100, 100)},
-            ]
-        )
-        result = compute_scag_density(parcels)
-        assert "current_density_du_per_ac" in result.columns
-        # RD1.5 → 43560 / 1500 = 29.04
-        assert result.iloc[0]["current_density_du_per_ac"] == pytest.approx(29.04, rel=0.01)
-
-    def test_non_la_density(self):
-        parcels = _make_parcels_gdf(
-            [
-                {"APN20": "1", "ZN19_SCAG": 1111, "CITY": "Other", "bbox": (-118.3, 34.0, -118.2, 34.1)},
-            ]
-        )
-        result = compute_scag_density(parcels)
-        # 1111 → 1 / area_acres (area-dependent)
-        assert result.iloc[0]["current_density_du_per_ac"] > 0
-
-    def test_non_la_density_zero_default(self):
-        """Unrecognized ZN19_SCAG codes should get NaN (excluded downstream)."""
-        parcels = _make_parcels_gdf(
-            [
-                {"APN20": "1", "ZN19_SCAG": 9999, "CITY": "Other", "bbox": (-118.3, 34.0, -118.2, 34.1)},
-            ]
-        )
-        result = compute_scag_density(parcels)
-        assert np.isnan(result.iloc[0]["current_density_du_per_ac"])
-
-
 # ---------------------------------------------------------------------------
 # Tests: trim_around_stations
 # ---------------------------------------------------------------------------
-
-
-class TestTrimAroundStations:
-    def test_parcel_within_buffer(self):
-        stops = _make_stops_gdf(
-            [
-                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
-            ]
-        )
-        # Parcel right next to the stop
-        parcels = _make_parcels_gdf(
-            [
-                {"APN20": "1", "current_density_du_per_ac": 10, "Tier": 1, "bbox": (-118.001, 33.999, -117.999, 34.001)},
-            ]
-        )
-        result = trim_around_stations(parcels, stops, 200)
-        assert len(result) >= 1
-        assert "buffer_zone_id" in result.columns
-        assert result["buffer_zone_id"].iloc[0] == "200ft"
-
-    def test_parcel_far_from_stop(self):
-        stops = _make_stops_gdf(
-            [
-                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
-            ]
-        )
-        # Parcel far away
-        parcels = _make_parcels_gdf(
-            [
-                {"APN20": "1", "current_density_du_per_ac": 10, "Tier": 1, "bbox": (-117.0, 34.0, -116.99, 34.01)},
-            ]
-        )
-        result = trim_around_stations(parcels, stops, 200)
-        assert len(result) == 0  # no intersection
 
 
 # ---------------------------------------------------------------------------

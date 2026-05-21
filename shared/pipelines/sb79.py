@@ -7,6 +7,16 @@ import numpy as np
 import pandas as pd
 
 from shared.api.gtfs import parent_stations_from_gtfs
+from shared.utils.constants import SCAG_FT_CSR
+
+ZONE_DENSITIES: dict[tuple[str, int], float] = {
+    ("200ft", 1): 160,
+    ("200ft", 2): 140,
+    ("qtr_mi", 1): 120,
+    ("qtr_mi", 2): 100,
+    ("half_mi", 1): 100,
+    ("half_mi", 2): 80,
+}
 
 
 def assign_tier_to_stops_from_gtfs(
@@ -136,7 +146,7 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
     zn19_scag = df["ZN19_SCAG"].astype(str)
-    area_acres = df.to_crs("EPSG:2229").area / 43560
+    area_acres = df.to_crs(SCAG_FT_CSR).area / 43560
     scag_density = zn19_scag.case_when(
         [
             (zn19_scag == "1110", 1 / area_acres.replace(0, np.nan)),
@@ -168,3 +178,30 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     df.loc[is_la, "current_density_du_per_ac"] = la_density
     df["current_density_du_per_ac"] = pd.to_numeric(df["current_density_du_per_ac"], errors="coerce")
     return df
+
+
+def trim_around_stations(
+    parcels_gdf: gpd.GeoDataFrame,
+    stops_gdf: gpd.GeoDataFrame,
+    buffer_dist_ft: int,
+) -> gpd.GeoDataFrame:
+    zone_map = {200: "200ft", 1320: "qtr_mi", 2640: "half_mi"}
+
+    buffer_df = gpd.GeoDataFrame(
+        {"stop_id": stops_gdf["stop_id"].values, "Tier": stops_gdf["Tier"].values},
+        geometry=stops_gdf.to_crs(SCAG_FT_CSR).geometry.buffer(buffer_dist_ft),
+        crs=SCAG_FT_CSR,
+    ).to_crs("EPSG:4326")
+
+    joined = gpd.sjoin(
+        parcels_gdf.to_crs("EPSG:4326"),
+        buffer_df[["stop_id", "Tier", "geometry"]],
+        how="inner",
+        predicate="intersects",
+    ).assign(Tier=lambda df: df["Tier_right"])
+
+    joined = joined.drop(columns=[c for c in ["Tier_left", "Tier_right"] if c in joined.columns])
+
+    trimmed = gpd.overlay(joined, buffer_df[["stop_id", "geometry"]], how="intersection")
+    trimmed["buffer_zone_id"] = zone_map.get(buffer_dist_ft, f"{buffer_dist_ft}ft")
+    return trimmed
