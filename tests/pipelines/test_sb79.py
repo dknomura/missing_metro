@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from shared.pipelines.sb79 import assign_tier_to_stops_from_gtfs, compute_scag_density, trim_around_stations
+from shared.pipelines.sb79 import assign_tier_to_stops_from_gtfs, compute_dwelling_units, compute_scag_density
 from tests.test_helpers import _make_parcels_gdf, _make_stops_gdf
 
 
@@ -75,94 +75,6 @@ class TestParseGtfsZip:
             assert result.iloc[0]["stop_id"] == "801S"
             assert result.iloc[0]["Tier"] == 1  # subway → Tier 1
             assert result.iloc[0]["route_types"] == "1"
-        finally:
-            path.unlink(missing_ok=True)
-
-    def test_tier1_light_rail_high_freq(self):
-        """route_type=0 with n_arrivals >= 72 → Tier 1."""
-        gtfs_bytes = _make_gtfs_zip(
-            {
-                "routes": [{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
-                "trips": [
-                    {"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(40)
-                ]
-                + [{"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(40, 80)],
-                "stop_times": [
-                    {"trip_id": f"t{i}", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
-                    for i in range(80)
-                ],
-                "stops": [
-                    {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
-                ],
-                "calendar": [
-                    {
-                        "service_id": "wk",
-                        "monday": "1",
-                        "tuesday": "1",
-                        "wednesday": "1",
-                        "thursday": "1",
-                        "friday": "1",
-                        "saturday": "0",
-                        "sunday": "0",
-                        "start_date": "20250101",
-                        "end_date": "20251231",
-                    }
-                ],
-            }
-        )
-        path = Path(tempfile.gettempdir()) / "_test_gtfs2.zip"
-
-        path.write_bytes(gtfs_bytes)
-        try:
-            result = assign_tier_to_stops_from_gtfs(path)
-            assert len(result) == 1
-            # 80 trips / 1 weekday service = 80/day >= 72 → Tier 1
-            assert result.iloc[0]["Tier"] == 1
-        finally:
-            path.unlink(missing_ok=True)
-
-    def test_tier1_light_rail_high_freq_72plus(self):
-        """route_type=0 with n_arrivals >= 72 → Tier 1."""
-        gtfs_bytes = _make_gtfs_zip(
-            {
-                "routes": [{"route_id": "801", "route_type": "0", "agency_id": "metro"}],
-                "trips": [
-                    {"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "0"} for i in range(200)
-                ]
-                + [
-                    {"route_id": "801", "trip_id": f"t{i}", "service_id": "wk", "direction_id": "1"} for i in range(200, 400)
-                ],
-                "stop_times": [
-                    {"trip_id": f"t{i}", "stop_id": "801S", "arrival_time": "08:00:00", "departure_time": "08:01:00"}
-                    for i in range(400)
-                ],
-                "stops": [
-                    {"stop_id": "801S", "stop_name": "Test", "stop_lat": "34.0", "stop_lon": "-118.0", "location_type": "1"},
-                ],
-                "calendar": [
-                    {
-                        "service_id": "wk",
-                        "monday": "1",
-                        "tuesday": "1",
-                        "wednesday": "1",
-                        "thursday": "1",
-                        "friday": "1",
-                        "saturday": "0",
-                        "sunday": "0",
-                        "start_date": "20250101",
-                        "end_date": "20251231",
-                    }
-                ],
-            }
-        )
-        path = Path(tempfile.gettempdir()) / "_test_gtfs3.zip"
-
-        path.write_bytes(gtfs_bytes)
-        try:
-            result = assign_tier_to_stops_from_gtfs(path)
-            assert len(result) == 1
-            # 400 trips / 5 days = 80/day >= 72 → Tier 1
-            assert result.iloc[0]["Tier"] == 1
         finally:
             path.unlink(missing_ok=True)
 
@@ -249,7 +161,6 @@ class TestParseGtfsZip:
         try:
             result = assign_tier_to_stops_from_gtfs(path)
             assert len(result) == 1
-            # 60 trips, 48 <= 60 < 72 → Tier 2
             assert result.iloc[0]["Tier"] == 2
         finally:
             path.unlink(missing_ok=True)
@@ -479,35 +390,134 @@ class TestComputeScagDensity:
         assert np.isnan(result.iloc[0]["current_density_du_per_ac"])
 
 
-class TestTrimAroundStations:
-    def test_parcel_within_buffer(self):
+class TestCreateBufferDonuts:
+    def test_basic_density(self):
         stops = _make_stops_gdf(
             [
                 {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
             ]
         )
-
         parcels = _make_parcels_gdf(
             [
-                {"APN20": "1", "current_density_du_per_ac": 10, "Tier": 1, "bbox": (-118.001, 33.999, -117.999, 34.001)},
+                {
+                    "APN20": "1",
+                    "current_density_du_per_ac": 10,
+                    "ZN19_CITY": "",
+                    "ZN19_SCAG": 0,
+                    "CITY": "Other",
+                    "COUNTY": "LA",
+                    "Tier": 1,
+                    "bbox": (-118.001, 33.999, -117.999, 34.001),
+                },
             ]
         )
-        result = trim_around_stations(parcels, stops, 200)
+        result = compute_dwelling_units(stops, parcels)
         assert len(result) >= 1
+        assert "new_density_du_per_ac" in result.columns
+        assert "new_dwelling_units" in result.columns
+        assert "current_dwelling_units" in result.columns
+        assert "additional_du" in result.columns
         assert "buffer_zone_id" in result.columns
-        assert result["buffer_zone_id"].iloc[0] == "200ft"
+        assert result["new_density_du_per_ac"].iloc[0] > 0
 
-    def test_parcel_far_from_stop(self):
+    def test_no_intersection_empty(self):
         stops = _make_stops_gdf(
             [
                 {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
             ]
         )
-        # Parcel far away
         parcels = _make_parcels_gdf(
             [
                 {"APN20": "1", "current_density_du_per_ac": 10, "Tier": 1, "bbox": (-117.0, 34.0, -116.99, 34.01)},
             ]
         )
-        result = trim_around_stations(parcels, stops, 200)
-        assert len(result) == 0  # no intersection
+        result = compute_dwelling_units(stops, parcels)
+        assert len(result) == 0
+
+    def test_tier_density_mapping(self):
+        stops_t1 = _make_stops_gdf(
+            [
+                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
+            ]
+        )
+        stops_t2 = _make_stops_gdf(
+            [
+                {"stop_id": "B", "Tier": 2, "lat": 34.0, "lon": -118.0},
+            ]
+        )
+        parcels = _make_parcels_gdf(
+            [
+                {
+                    "APN20": "1",
+                    "current_density_du_per_ac": 10,
+                    "ZN19_CITY": "",
+                    "ZN19_SCAG": 0,
+                    "CITY": "Other",
+                    "COUNTY": "LA",
+                    "Tier": 1,
+                    "bbox": (-118.001, 33.999, -117.999, 34.001),
+                },
+            ]
+        )
+        r1 = compute_dwelling_units(stops_t1, parcels)
+        r2 = compute_dwelling_units(stops_t2, parcels)
+        assert r1["new_density_du_per_ac"].iloc[0] > r2["new_density_du_per_ac"].iloc[0]
+
+    def test_multiple_apn_aggregation(self):
+        stops = _make_stops_gdf(
+            [
+                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
+            ]
+        )
+        parcels = _make_parcels_gdf(
+            [
+                {
+                    "APN20": "1",
+                    "current_density_du_per_ac": 10,
+                    "ZN19_CITY": "",
+                    "ZN19_SCAG": 0,
+                    "CITY": "Other",
+                    "COUNTY": "LA",
+                    "Tier": 1,
+                    "bbox": (-118.0001, 33.9999, -117.9999, 34.0001),
+                },
+                {
+                    "APN20": "2",
+                    "current_density_du_per_ac": 20,
+                    "ZN19_CITY": "",
+                    "ZN19_SCAG": 0,
+                    "CITY": "Other",
+                    "COUNTY": "LA",
+                    "Tier": 1,
+                    "bbox": (-118.00015, 33.99985, -117.99985, 34.00015),
+                },
+            ]
+        )
+        result = compute_dwelling_units(stops, parcels)
+        assert len(result) >= 1
+        apns = set(result["APN20"])
+        assert "1" in apns or "2" in apns
+        assert "area_acres" in result.columns
+
+    def test_additional_du_nonnegative(self):
+        stops = _make_stops_gdf(
+            [
+                {"stop_id": "A", "Tier": 1, "lat": 34.0, "lon": -118.0},
+            ]
+        )
+        parcels = _make_parcels_gdf(
+            [
+                {
+                    "APN20": "1",
+                    "current_density_du_per_ac": 10,
+                    "ZN19_CITY": "",
+                    "ZN19_SCAG": 0,
+                    "CITY": "Other",
+                    "COUNTY": "LA",
+                    "Tier": 1,
+                    "bbox": (-118.001, 33.999, -117.999, 34.001),
+                },
+            ]
+        )
+        result = compute_dwelling_units(stops, parcels)
+        assert result["additional_du"].iloc[0] >= 0

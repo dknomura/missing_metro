@@ -22,7 +22,7 @@ def parent_stations_from_gtfs(
     pd.DataFrame
         Parent stations with columns: stop_id, stop_name, stop_lat, stop_lon,
         route_ids (list), route_types (list), agencies (list),
-        n_arrivals (list of avg trips/day per route, parallel to route_ids).
+        n_arrivals (list of avg trips/day per route).
     """
     all_dates = feed.get_dates(as_date_obj=True)
     if days_of_week is not None:
@@ -32,17 +32,14 @@ def parent_stations_from_gtfs(
 
     date_strings = [d.strftime("%Y%m%d") for d in all_dates]
 
-    # Get trip activity (which trips are active on which dates)
     activity = feed.compute_trip_activity(date_strings)
 
-    # Melt activity into long format: trip_id, date, active
     activity_long = activity.melt(
         id_vars=["trip_id"],
         var_name="date",
         value_name="active",
     )
 
-    # Keep only active trips and join with stop_times -> trips -> routes
     active_trips = activity_long[activity_long["active"] > 0]
 
     # Count trips per stop_id per route per date
@@ -51,10 +48,10 @@ def parent_stations_from_gtfs(
         .merge(feed.stop_times[["trip_id", "stop_id"]], on="trip_id")
         .merge(feed.trips[["trip_id", "route_id"]], on="trip_id")
         .merge(
-            feed.routes[["route_id", "route_type", "agency_id"]],
+            feed.routes[["route_id", "route_type"]],
             on="route_id",
         )
-        .groupby(["stop_id", "route_id", "route_type", "agency_id", "date"])
+        .groupby(["stop_id", "route_id", "route_type", "date"])
         .size()
         .reset_index(name="num_trips")
     )
@@ -62,15 +59,13 @@ def parent_stations_from_gtfs(
     if route_trip_counts.empty:
         return pd.DataFrame()
 
-    # Sum trips across all stops for the same route on each date,
-    # then average across active dates to get avg trips/day per route.
     route_avg = (
-        route_trip_counts.groupby(["route_id", "route_type", "agency_id", "date"])["num_trips"]
+        route_trip_counts.groupby(["stop_id", "route_id", "route_type", "date"])["num_trips"]
         .sum()
+        .groupby(["stop_id", "route_id", "route_type"])
+        .mean()  # avg trips per day at this stop for this route
+        .rename("avg_trips")
         .reset_index()
-        .groupby(["route_id", "route_type", "agency_id"])["num_trips"]
-        .mean()
-        .reset_index(name="avg_trips")
     )
 
     stops_df = feed.stops
@@ -95,16 +90,15 @@ def parent_stations_from_gtfs(
     # Map each stop to its parent, deduplicate by (parent_id, route_id),
     # then aggregate into parallel lists per parent station.
     parent_route_info = (
-        route_trip_counts[["stop_id", "route_id", "route_type", "agency_id"]]
+        route_trip_counts[["stop_id", "route_id", "route_type"]]
         .drop_duplicates()
         .merge(stop_to_parent, on="stop_id")
-        .merge(route_avg, on=["route_id", "route_type", "agency_id"])
+        .merge(route_avg, on=["route_id", "route_type"])
         .drop_duplicates(subset=["parent_id", "route_id"])
         .groupby("parent_id")
         .agg(
             route_ids=("route_id", list),
             route_types=("route_type", lambda x: [str(t) for t in x]),
-            agencies=("agency_id", list),
             n_arrivals=("avg_trips", list),
         )
         .reset_index()

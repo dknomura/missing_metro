@@ -2,7 +2,7 @@ import geopandas as gpd
 import pytest
 from shapely.geometry import LineString, Point, Polygon, box
 
-from shared.utils.constants import SCAG_FT_CSR
+from shared.utils.constants import SCAG_FT_CRS
 from shared.utils.geoprocessing import clip_to_buffer_rings
 
 # EPSG:2229 coordinates for a point in central LA
@@ -13,7 +13,7 @@ def _source(x: float = LA_X, y: float = LA_Y) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(
         {"source_id": ["S1"]},
         geometry=[Point(x, y)],
-        crs=SCAG_FT_CSR,
+        crs=SCAG_FT_CRS,
     )
 
 
@@ -21,7 +21,7 @@ def _point_feature(x: float, y: float) -> gpd.GeoDataFrame:
     return gpd.GeoDataFrame(
         {"feature_id": ["F1"]},
         geometry=[Point(x, y)],
-        crs=SCAG_FT_CSR,
+        crs=SCAG_FT_CRS,
     )
 
 
@@ -29,7 +29,7 @@ def _line_feature(x0: float, y0: float, x1: float, y1: float) -> gpd.GeoDataFram
     return gpd.GeoDataFrame(
         {"feature_id": ["F1"]},
         geometry=[LineString([(x0, y0), (x1, y1)])],
-        crs=SCAG_FT_CSR,
+        crs=SCAG_FT_CRS,
     )
 
 
@@ -37,7 +37,7 @@ def _polygon_feature(cx: float, cy: float, half: float = 50) -> gpd.GeoDataFrame
     return gpd.GeoDataFrame(
         {"feature_id": ["F1"]},
         geometry=[box(cx - half, cy - half, cx + half, cy + half)],
-        crs=SCAG_FT_CSR,
+        crs=SCAG_FT_CRS,
     )
 
 

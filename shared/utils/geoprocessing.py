@@ -2,12 +2,14 @@ from typing import Literal
 
 import geopandas as gpd
 
+from shared.utils.constants import SCAG_FT_CRS
+
 
 def clip_to_buffer_rings(
     features_gdf: gpd.GeoDataFrame,
     sources_gdf: gpd.GeoDataFrame,
     buffer_distances: list[int | float],
-    buffer_crs: str = "EPSG:2229",
+    buffer_crs: str = SCAG_FT_CRS,
     donut_how: Literal["difference", "union"] = "difference",
 ) -> list[gpd.GeoDataFrame]:
     """Clip features to concentric donut rings buffered around source geometries.
@@ -58,7 +60,7 @@ def clip_to_buffer_rings(
     clipped = {
         dist: gpd.overlay(
             gpd.sjoin(features_reproj, buf, how="inner", predicate="intersects"),
-            buf,
+            buf[["geometry"]],
             how="intersection",
         )
         for dist, buf in buffers.items()
@@ -68,6 +70,8 @@ def clip_to_buffer_rings(
     for outer, inner in ring_definitions:
         outer_clip = clipped[outer]
         if inner is None:
+            rings.append(outer_clip)
+        elif outer_clip.empty:
             rings.append(outer_clip)
         else:
             rings.append(gpd.overlay(outer_clip, buffers[inner][["geometry"]], how=donut_how))

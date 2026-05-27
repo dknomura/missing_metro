@@ -5,18 +5,11 @@ import geopandas as gpd
 import gtfs_kit
 import numpy as np
 import pandas as pd
+from shapely import unary_union
 
 from shared.api.gtfs import parent_stations_from_gtfs
-from shared.utils.constants import SCAG_FT_CSR
-
-ZONE_DENSITIES: dict[tuple[str, int], float] = {
-    ("200ft", 1): 160,
-    ("200ft", 2): 140,
-    ("qtr_mi", 1): 120,
-    ("qtr_mi", 2): 100,
-    ("half_mi", 1): 100,
-    ("half_mi", 2): 80,
-}
+from shared.utils.constants import SCAG_FT_CRS, WGS84_GCS_CRS
+from shared.utils.geoprocessing import clip_to_buffer_rings
 
 
 def assign_tier_to_stops_from_gtfs(
@@ -29,7 +22,6 @@ def assign_tier_to_stops_from_gtfs(
     if result_df.empty:
         return _empty_result()
 
-    # --- Sum avg daily arrivals across train route types only (0, 1, 2) ---
     exploded = result_df[["stop_id", "route_types", "n_arrivals"]].explode(["route_types", "n_arrivals"])
     train_arrivals = exploded[exploded["route_types"].astype(int).isin([0, 1, 2])].groupby("stop_id")["n_arrivals"].sum()
     result_df["total_train_arrivals"] = result_df["stop_id"].map(train_arrivals).fillna(0)
@@ -43,9 +35,9 @@ def assign_tier_to_stops_from_gtfs(
     result_df["Tier"] = pd.Series(pd.NA, index=result_df.index).case_when(
         [
             (has_subway, 1),
-            ((has_commuter | has_light_rail) & (arrivals >= 72), 1),
-            (has_commuter & arrivals.between(48, 71, inclusive="both"), 2),
-            (has_light_rail & (arrivals < 72), 2),
+            ((has_commuter) & (arrivals >= 72), 1),
+            ((has_commuter) & (arrivals >= 48), 2),
+            (has_light_rail, 2),
         ]
     )
 
@@ -58,17 +50,16 @@ def assign_tier_to_stops_from_gtfs(
     result_df = result_df.dropna(subset=["Tier"]).assign(
         Tier=lambda df: df["Tier"].astype(int),
         n_arrivals=lambda df: df["total_train_arrivals"],
-        agencies=lambda df: df["agencies"].apply(",".join),
         route_ids=lambda df: df["route_ids"].apply(",".join),
         route_types=lambda df: df["route_types"].apply(",".join),
-    )[["stop_id", "stop_name", "stop_lat", "stop_lon", "agencies", "route_ids", "route_types", "Tier", "n_arrivals"]]
+    )[["stop_id", "stop_name", "stop_lat", "stop_lon", "route_ids", "route_types", "Tier", "n_arrivals"]]
 
     if result_df.empty:
         return _empty_result()
 
     return gpd.GeoDataFrame(
         result_df,
-        geometry=gpd.points_from_xy(result_df["stop_lon"], result_df["stop_lat"], crs="EPSG:4326"),
+        geometry=gpd.points_from_xy(result_df["stop_lon"], result_df["stop_lat"], crs=WGS84_GCS_CRS),
     ).drop(columns=["stop_lat", "stop_lon"])
 
 
@@ -79,13 +70,12 @@ def _empty_result() -> gpd.GeoDataFrame:
             "stop_id": pd.Series(dtype=str),
             "stop_name": pd.Series(dtype=str),
             "Tier": pd.Series(dtype=int),
-            "agencies": pd.Series(dtype=str),
             "route_ids": pd.Series(dtype=str),
             "route_types": pd.Series(dtype=str),
             "n_arrivals": pd.Series(dtype=int),
         },
         geometry=pd.Series(dtype=object),
-        crs="EPSG:4326",
+        crs=WGS84_GCS_CRS,
     )
 
 
@@ -146,7 +136,7 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
 
     zn19_scag = df["ZN19_SCAG"].astype(str)
-    area_acres = df.to_crs(SCAG_FT_CSR).area / 43560
+    area_acres = df.to_crs(SCAG_FT_CRS).area / 43560
     scag_density = zn19_scag.case_when(
         [
             (zn19_scag == "1110", 1 / area_acres.replace(0, np.nan)),
@@ -180,28 +170,86 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return df
 
 
-def trim_around_stations(
-    parcels_gdf: gpd.GeoDataFrame,
+def compute_dwelling_units(
     stops_gdf: gpd.GeoDataFrame,
-    buffer_dist_ft: int,
+    scag_density: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
-    zone_map = {200: "200ft", 1320: "qtr_mi", 2640: "half_mi"}
+    stops_trimmed = stops_gdf[["stop_id", "Tier", "geometry"]]
 
-    buffer_df = gpd.GeoDataFrame(
-        {"stop_id": stops_gdf["stop_id"].values, "Tier": stops_gdf["Tier"].values},
-        geometry=stops_gdf.to_crs(SCAG_FT_CSR).geometry.buffer(buffer_dist_ft),
-        crs=SCAG_FT_CSR,
-    ).to_crs("EPSG:4326")
+    scag_clean = scag_density.drop(columns=["Tier"], errors="ignore")
 
-    joined = gpd.sjoin(
-        parcels_gdf.to_crs("EPSG:4326"),
-        buffer_df[["stop_id", "Tier", "geometry"]],
-        how="inner",
-        predicate="intersects",
-    ).assign(Tier=lambda df: df["Tier_right"])
+    buffer_distances = [200, 1320, 2640]
+    rings = clip_to_buffer_rings(
+        features_gdf=scag_clean,
+        sources_gdf=stops_trimmed,
+        buffer_distances=buffer_distances,
+        buffer_crs=SCAG_FT_CRS,
+        donut_how="difference",
+    )
 
-    joined = joined.drop(columns=[c for c in ["Tier_left", "Tier_right"] if c in joined.columns])
+    for ring, distance in zip(rings, buffer_distances, strict=False):
+        ring["buffer_zone_id"] = f"{distance} ft"
 
-    trimmed = gpd.overlay(joined, buffer_df[["stop_id", "geometry"]], how="intersection")
-    trimmed["buffer_zone_id"] = zone_map.get(buffer_dist_ft, f"{buffer_dist_ft}ft")
-    return trimmed
+    buffed_parcels = gpd.GeoDataFrame(pd.concat(rings, ignore_index=True))
+
+    buffed_parcels["area_sqft"] = buffed_parcels.area
+
+    zone_densities_series = pd.Series(
+        {
+            ("200 ft", 1): 160,
+            ("200 ft", 2): 140,
+            ("1320 ft", 1): 120,
+            ("1320 ft", 2): 100,
+            ("2640 ft", 1): 100,
+            ("2640 ft", 2): 80,
+        }
+    )
+    buffed_parcels["zone_density"] = buffed_parcels.set_index(["buffer_zone_id", "Tier"]).index.map(zone_densities_series)
+
+    area_agg = buffed_parcels.groupby("APN20")["area_sqft"].sum().rename("area_sqft_total")
+    area_acres = area_agg / 43560
+
+    buffed_parcels["area_x_density"] = buffed_parcels["area_sqft"] * buffed_parcels["zone_density"]
+    weighted_sum = buffed_parcels.groupby("APN20")["area_x_density"].sum()
+
+    geom_agg = buffed_parcels.groupby("APN20")["geometry"].agg(unary_union)
+
+    first_agg = buffed_parcels.groupby("APN20").first()[
+        [
+            "current_density_du_per_ac",
+            "Tier",
+            "ZN19_CITY",
+            "ZN19_SCAG",
+            "COUNTY",
+            "CITY",
+            "buffer_zone_id",
+        ]
+    ]
+    weighted_density = np.where(
+        (area_agg > 0) & (first_agg["current_density_du_per_ac"].notna()), weighted_sum / area_agg, np.nan
+    )
+
+    by_apn = gpd.GeoDataFrame(
+        {
+            "APN20": area_agg.index,
+            "geometry": geom_agg.values,
+            "area_acres": area_acres.values,
+            "new_density_du_per_ac": weighted_density,
+            "new_dwelling_units": weighted_density * area_acres.values,
+            "current_dwelling_units": first_agg["current_density_du_per_ac"].values * area_acres.values,
+            "current_density_du_per_ac": first_agg["current_density_du_per_ac"].values,
+            "Tier": first_agg["Tier"].values,
+            "ZN19_CITY": first_agg["ZN19_CITY"].values,
+            "ZN19_SCAG": first_agg["ZN19_SCAG"].values,
+            "COUNTY": first_agg["COUNTY"].values,
+            "CITY": first_agg["CITY"].values,
+            "buffer_zone_id": first_agg["buffer_zone_id"].values,
+        },
+        geometry="geometry",
+        crs=buffed_parcels.crs,
+    )
+    by_apn["additional_du"] = np.maximum(
+        0,
+        by_apn.get("new_dwelling_units", 0) - by_apn.get("current_dwelling_units", 0),
+    )
+    return by_apn

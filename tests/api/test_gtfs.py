@@ -101,7 +101,7 @@ class TestParentStationsFromGtfs:
         assert result.iloc[0]["stop_id"] == "S1"
         assert route1 in result.iloc[0]["route_ids"]
         # n_arrivals is now a list of per-route averages (parallel to route_ids)
-        assert result.iloc[0]["n_arrivals"] == [2.0]
+        assert result.iloc[0]["n_arrivals"] == [1.0]
 
     def test_no_parent_stations_falls_back_to_boarding_stops(self):
         """When no location_type=1 stops exist, boarding stops are treated as parents."""
@@ -177,8 +177,7 @@ class TestParentStationsFromGtfs:
 
         # Assert
         assert len(result) == 1
-        # 3 trips at S1A + 3 trips at S1B = 6 trips/day for route 801
-        assert result.iloc[0]["n_arrivals"] == [6.0]
+        assert result.iloc[0]["n_arrivals"] == [3.0]
 
     def test_routes_merged_across_children(self):
         # Arrange
@@ -223,7 +222,6 @@ class TestParentStationsFromGtfs:
         # route_ids is now a list (not a set)
         assert result.iloc[0]["route_ids"] == [route1["route_id"], route2["route_id"]]
         assert result.iloc[0]["route_types"] == [str(route1["route_type"]), str(route2["route_type"])]
-        assert result.iloc[0]["agencies"] == [route1["agency_id"], route2["agency_id"]]
 
     def test_stop_with_no_trips_excluded(self):
         """Parent stations with no associated trips are excluded from the result."""
@@ -358,4 +356,4 @@ class TestParentStationsFromGtfs:
 
         # Assert
         assert len(result) == 1
-        assert result.iloc[0]["n_arrivals"] == [2.0]
+        assert result.iloc[0]["n_arrivals"] == [1.0]

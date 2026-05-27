@@ -1,6 +1,8 @@
 import geopandas as gpd
 from shapely.geometry import Point, box
 
+from shared.utils.constants import WGS84_GCS_CRS
+
 
 def _make_parcels_gdf(parcels_data: list[dict]) -> gpd.GeoDataFrame:
     records = []
@@ -20,7 +22,7 @@ def _make_parcels_gdf(parcels_data: list[dict]) -> gpd.GeoDataFrame:
             if k not in rec and k != "bbox":
                 rec[k] = v
         records.append(rec)
-    return gpd.GeoDataFrame(records, crs="EPSG:4326")
+    return gpd.GeoDataFrame(records, crs=WGS84_GCS_CRS)
 
 
 def _make_stops_gdf(stops_data: list[dict]) -> gpd.GeoDataFrame:
@@ -35,4 +37,4 @@ def _make_stops_gdf(stops_data: list[dict]) -> gpd.GeoDataFrame:
                 "geometry": Point(s["lon"], s["lat"]),
             }
         )
-    return gpd.GeoDataFrame(records, crs="EPSG:4326")
+    return gpd.GeoDataFrame(records, crs=WGS84_GCS_CRS)
