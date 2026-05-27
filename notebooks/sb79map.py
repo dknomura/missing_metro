@@ -16,6 +16,7 @@ __generated_with = "0.23.6"
 app = marimo.App()
 
 with app.setup(hide_code=True):
+    import tempfile
     from pathlib import Path
 
     import folium
@@ -39,49 +40,47 @@ with app.setup(hide_code=True):
 @app.cell(hide_code=True)
 def _():
     mo.md("""
-# SB-79 Analysis
-[Code for this notebook.](https://github.com/dknomura/missing_metro/blob/main/notebooks/sb79map.py)
+    # SB-79 Analysis
+    [Code for this notebook.](https://github.com/dknomura/missing_metro/blob/main/notebooks/sb79map.py)
 
-## Instructions
-1. If you do not have a GTFS zip file, download one of the following for a demo
+    ## Instructions
+    1. If you do not have a GTFS zip file, download one of the following for a demo
         - [OC Streetcar GTFS](https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip)
         - [LA Metro GTFS](https://gitlab.com/LACMTA/gtfs_rail/raw/master/gtfs_rail.zip) this will take 5-10 min
-2. GTFS file needs to be for a transit system in the SCAG region (LA, Orange, Riverside, San Bernardino, Ventura).
+    2. GTFS file needs to be for a transit system in the SCAG region (LA, Orange, Riverside, San Bernardino, Ventura).
 
 
-## Overview of SB-79 analysis
-SB-79 is a California bill that promotes transit oriented development by allowing increased residential density
-and reduced parking requirements within a half mile of qualifying transit stations.
-The two tables below summarize the tier designations and the zoning allowances under SB-79.
+    ## Overview of SB-79 analysis
+    SB-79 is a California bill that promotes transit oriented development by allowing increased residential density
+    and reduced parking requirements within a half mile of qualifying transit stations.
+    The two tables below summarize the tier designations and the zoning allowances under SB-79.
 
-| **Table 1: Tier designations** | | | |
-|--------|----------------------|----|--------------------------------------------|
-| Tier 1 | Heavy rail (subway) | or | Commuter rail with more than 72 trains/day |
-| Tier 2 | Light rail | or | Commuter rail with more than 48 trains/day |
+    | **Table 1: Tier designations** | | | |
+    |--------|----------------------|----|--------------------------------------------|
+    | Tier 1 | Heavy rail (subway) | or | Commuter rail with more than 72 trains/day |
+    | Tier 2 | Light rail | or | Commuter rail with more than 48 trains/day |
 
-**Table 2: Permitted Zoning Based on Distance from Station (du/ac = dwelling units / acre)**
+    **Table 2: Permitted Zoning Based on Distance from Station (du/ac = dwelling units / acre)**
 
-| | Within 200 feet of a station | Within ¼ mile of a station | Within ½ mile of a station |
-|--------|------------------------------|---------------------------|---------------------------|
-| Tier 1 | 9 stories (160 du/ac) | 7 stories (120 du/ac) | 6 stories (100 du/ac) |
-| Tier 2 | 8 stories (140 du/ac) | 6 stories (100 du/ac) | 5 stories (80 du/ac) |
+    | | Within 200 feet of a station | Within ¼ mile of a station | Within ½ mile of a station |
+    |--------|------------------------------|---------------------------|---------------------------|
+    | Tier 1 | 9 stories (160 du/ac) | 7 stories (120 du/ac) | 6 stories (100 du/ac) |
+    | Tier 2 | 8 stories (140 du/ac) | 6 stories (100 du/ac) | 5 stories (80 du/ac) |
 
-This notebook takes in a General Transit Feed Specification (GTFS) zip file and uses SCAG zoning parcel data to calculate
-the density and dwelling units that are currently permitted and compares it with the potential under SB-79.
-""")
+    This notebook takes in a General Transit Feed Specification (GTFS) zip file and uses SCAG zoning parcel data to calculate
+    the density and dwelling units that are currently permitted and compares it with the potential under SB-79.
+    """)
     return
 
 
 @app.cell(hide_code=True)
 def _():
-    file_input = mo.ui.file_browser(
-        initial_path=str(Path.home() / "Downloads"),
+    file_input = mo.ui.file(
         label="Select a GTFS zip file to initiate the SB-79 analysis",
         filetypes=[".zip"],
-        multiple=False,
     )
 
-    mo.hstack([file_input], justify="start")
+    file_input
     return (file_input,)
 
 
@@ -89,7 +88,11 @@ def _():
 def _(file_input):
     mo.stop(not file_input.value, mo.md("⬆️ Upload a GTFS zip to continue"))
 
-    new_stops = assign_tier_to_stops_from_gtfs(str(file_input.path()))
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(file_input.value[0].contents)
+        tmp.flush()
+
+        new_stops = assign_tier_to_stops_from_gtfs(tmp.name, tier_overrides={"route-mourbghe-3": 2})
     return (new_stops,)
 
 
@@ -143,7 +146,6 @@ def _(file_input, scag_parcels):
         label="Page",
     )
     page
-
     return page, page_size
 
 
