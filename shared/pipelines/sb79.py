@@ -80,93 +80,95 @@ def _empty_result() -> gpd.GeoDataFrame:
 
 
 def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    """Add ``current_density_du_per_ac`` to SCAG parcels using LA / non-LA logic.
-
-    For LA parcels, first tries ``ZN19_CITY`` zone codes. If no match is found,
-    falls through to try ``ZN19_SCAG`` codes. Parcels that don't match any code
-    get ``NaN`` (excluded from downstream calculations).
-
-    Parameters
-    ----------
-    scag_parcels:
-        Must have columns ``ZN19_CITY``, ``ZN19_SCAG``, ``CITY``, and a valid
-        geometry for area calculations.
-
-    Returns
-    -------
-    gpd.GeoDataFrame
-        Same as input with an added ``current_density_du_per_ac`` column.
-    """
     df = scag_parcels.copy()
-
-    # --- LA density: map ZN19_CITY zone codes → du/ac ---
-    la_density = df["ZN19_CITY"].case_when(
-        [
-            (df["ZN19_CITY"].str.contains("RD1.5", na=False), 43560 / 1500),
-            (df["ZN19_CITY"].str.contains("RD2", na=False), 43560 / 2000),
-            (df["ZN19_CITY"].str.contains("RD3", na=False), 43560 / 3000),
-            (df["ZN19_CITY"].str.contains("RD4", na=False), 43560 / 4000),
-            (df["ZN19_CITY"].str.contains("RD5", na=False), 43560 / 5000),
-            (df["ZN19_CITY"].str.contains("RD6", na=False), 43560 / 6000),
-            (df["ZN19_CITY"].str.contains("RMP", na=False), 43560 / 20000),
-            (df["ZN19_CITY"].str.contains("R3", na=False), 43560 / 800),
-            (df["ZN19_CITY"].str.contains("RAS3", na=False), 43560 / 800),
-            (df["ZN19_CITY"].str.contains("R4", na=False), 43560 / 400),
-            (df["ZN19_CITY"].str.contains("RAS4", na=False), 43560 / 400),
-            (df["ZN19_CITY"].str.contains("R5", na=False), 43560 / 200),
-            (df["ZN19_CITY"].str.contains("RE40", na=False), 43560 / 40000),
-            (df["ZN19_CITY"].str.contains("RE20", na=False), 43560 / 20000),
-            (df["ZN19_CITY"].str.contains("RE15", na=False), 43560 / 15000),
-            (df["ZN19_CITY"].str.contains("RE11", na=False), 43560 / 11000),
-            (df["ZN19_CITY"].str.contains("RE9", na=False), 43560 / 9000),
-            (df["ZN19_CITY"].str.contains("RS", na=False), 43560 / 7500),
-            (df["ZN19_CITY"].str.contains("R1", na=False), 43560 / 5000),
-            (df["ZN19_CITY"].str.contains("RU", na=False), 43560 / 3500),
-            (df["ZN19_CITY"].str.contains("RZ2.5", na=False), 43560 / 2500),
-            (df["ZN19_CITY"].str.contains("RZ3", na=False), 43560 / 3000),
-            (df["ZN19_CITY"].str.contains("RZ4", na=False), 43560 / 4000),
-            (df["ZN19_CITY"].str.contains("RW1", na=False), 43560 / 2300),
-            (df["ZN19_CITY"].str.contains("R2", na=False), 43560 / 2500),
-            (df["ZN19_CITY"].str.contains("RW2", na=False), 43560 / 1150),
-            (df["ZN19_CITY"].str.contains("C1", na=False), 100),
-            (df["ZN19_CITY"].str.contains("C2", na=False), 43560 / 400),
-            (df["ZN19_CITY"].str.contains("C3", na=False), 110),
-            (df["ZN19_CITY"].str.contains("C4", na=False), 200),
-        ]
-    )
-
-    zn19_scag = df["ZN19_SCAG"].astype(str)
-    area_acres = df.to_crs(SCAG_FT_CRS).area / 43560
-    scag_density = zn19_scag.case_when(
-        [
-            (zn19_scag == "1110", 1 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1111", 1 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1112", 1 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1113", 1 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1121", 3 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1122", 3 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1140", 3 / area_acres.replace(0, np.nan)),
-            (zn19_scag == "1123", 18),
-            (zn19_scag == "1124", 60),
-            (zn19_scag == "1125", 80),
-            (zn19_scag == "1131", 6),
-            (zn19_scag == "1150", 1),
-            (zn19_scag == "1150", 1),
-            (zn19_scag == "1600", 40),
-            (zn19_scag == "1610", 40),
-            (zn19_scag == "1620", 30),
-            (zn19_scag.isin(["1220", "1221", "1222"]), 47),
-            (zn19_scag.isin(["2000", "2100", "2200", "2300", "2400", "2500", "2600", "2700"]), 1 / 5),
-            (zn19_scag.isin(["1900", "7777", "1500", "1233", "1210", "1211", "1212", "1213", "1247"]), 0),
-            (zn19_scag == zn19_scag, np.nan),
-        ]
-    )
-
     is_la = df["CITY"] == "Los Angeles"
 
-    df["current_density_du_per_ac"] = scag_density
-    df.loc[is_la, "current_density_du_per_ac"] = la_density
-    df["current_density_du_per_ac"] = pd.to_numeric(df["current_density_du_per_ac"], errors="coerce")
+    SCAG_FIXED = {
+        "1123": 18,
+        "1124": 60,
+        "1125": 80,
+        "1131": 6,
+        "1150": 1,
+        "1600": 40,
+        "1610": 40,
+        "1620": 30,
+        "1220": 47,
+        "1221": 47,
+        "1222": 47,
+        "2000": 0.2,
+        "2100": 0.2,
+        "2200": 0.2,
+        "2300": 0.2,
+        "2400": 0.2,
+        "2500": 0.2,
+        "2600": 0.2,
+        "2700": 0.2,
+        "1900": 0,
+        "7777": 0,
+        "1500": 0,
+        "1233": 0,
+        "1210": 0,
+        "1211": 0,
+        "1212": 0,
+        "1213": 0,
+        "1247": 0,
+    }
+    SCAG_AREA_BASED = {"1110": 1, "1111": 1, "1112": 1, "1113": 1, "1121": 3, "1122": 3, "1140": 3}
+
+    zn19_scag = df["ZN19_SCAG"].astype(str)
+    scag_density = zn19_scag.map(SCAG_FIXED)
+
+    area_mask = zn19_scag.isin(SCAG_AREA_BASED)
+    if area_mask.any():
+        area_acres = df.loc[area_mask].to_crs(SCAG_FT_CRS).area / 43560
+        area_acres = area_acres.replace(0, np.nan)
+        scag_density.loc[area_mask] = zn19_scag[area_mask].map(SCAG_AREA_BASED) / area_acres
+
+    LA_ZONES = [
+        ("RD1.5", 43560 / 1500),
+        ("RD2", 43560 / 2000),
+        ("RD3", 43560 / 3000),
+        ("RD4", 43560 / 4000),
+        ("RD5", 43560 / 5000),
+        ("RD6", 43560 / 6000),
+        ("RMP", 43560 / 20000),
+        ("RAS3", 43560 / 800),
+        ("RAS4", 43560 / 400),
+        ("R3", 43560 / 800),
+        ("R4", 43560 / 400),
+        ("R5", 43560 / 200),
+        ("RE40", 43560 / 40000),
+        ("RE20", 43560 / 20000),
+        ("RE15", 43560 / 15000),
+        ("RE11", 43560 / 11000),
+        ("RE9", 43560 / 9000),
+        ("RS", 43560 / 7500),
+        ("R1", 43560 / 5000),
+        ("RU", 43560 / 3500),
+        ("RZ2.5", 43560 / 2500),
+        ("RZ3", 43560 / 3000),
+        ("RZ4", 43560 / 4000),
+        ("RW1", 43560 / 2300),
+        ("R2", 43560 / 2500),
+        ("RW2", 43560 / 1150),
+        ("C1", 100),
+        ("C2", 43560 / 400),
+        ("C3", 110),
+        ("C4", 200),
+    ]
+
+    if is_la.any():
+        la_zones = df.loc[is_la, "ZN19_CITY"]
+        la_density = pd.Series(np.nan, index=la_zones.index)
+        for code, density in LA_ZONES:
+            unmatched = la_density.isna()
+            if not unmatched.any():
+                break
+            mask = unmatched & la_zones.str.contains(code, na=False, regex=False)
+            la_density.loc[mask] = density
+        scag_density.loc[is_la] = la_density
+
+    df["current_density_du_per_ac"] = pd.to_numeric(scag_density, errors="coerce")
     return df
 
 
@@ -175,10 +177,18 @@ def compute_dwelling_units(
     scag_density: gpd.GeoDataFrame,
 ) -> gpd.GeoDataFrame:
     stops_trimmed = stops_gdf[["stop_id", "Tier", "geometry"]]
-
     scag_clean = scag_density.drop(columns=["Tier"], errors="ignore")
 
+    zone_densities = {
+        ("200 ft", 1): 160,
+        ("200 ft", 2): 140,
+        ("1320 ft", 1): 120,
+        ("1320 ft", 2): 100,
+        ("2640 ft", 1): 100,
+        ("2640 ft", 2): 80,
+    }
     buffer_distances = [200, 1320, 2640]
+
     rings = clip_to_buffer_rings(
         features_gdf=scag_clean,
         sources_gdf=stops_trimmed,
@@ -191,59 +201,48 @@ def compute_dwelling_units(
         ring["buffer_zone_id"] = f"{distance} ft"
 
     buffed_parcels = gpd.GeoDataFrame(pd.concat(rings, ignore_index=True))
-
     buffed_parcels["area_sqft"] = buffed_parcels.area
-
-    zone_densities_series = pd.Series(
-        {
-            ("200 ft", 1): 160,
-            ("200 ft", 2): 140,
-            ("1320 ft", 1): 120,
-            ("1320 ft", 2): 100,
-            ("2640 ft", 1): 100,
-            ("2640 ft", 2): 80,
-        }
+    buffed_parcels["zone_density"] = buffed_parcels.set_index(["buffer_zone_id", "Tier"]).index.map(
+        pd.Series(zone_densities)
     )
-    buffed_parcels["zone_density"] = buffed_parcels.set_index(["buffer_zone_id", "Tier"]).index.map(zone_densities_series)
-
-    area_agg = buffed_parcels.groupby("APN20")["area_sqft"].sum().rename("area_sqft_total")
-    area_acres = area_agg / 43560
-
     buffed_parcels["area_x_density"] = buffed_parcels["area_sqft"] * buffed_parcels["zone_density"]
-    weighted_sum = buffed_parcels.groupby("APN20")["area_x_density"].sum()
 
-    geom_agg = buffed_parcels.groupby("APN20")["geometry"].agg(unary_union)
+    agg = buffed_parcels.groupby("APN20").agg(
+        area_sqft_total=("area_sqft", "sum"),
+        area_x_density_sum=("area_x_density", "sum"),
+        current_density_du_per_ac=("current_density_du_per_ac", "first"),
+        Tier=("Tier", "first"),
+        ZN19_CITY=("ZN19_CITY", "first"),
+        ZN19_SCAG=("ZN19_SCAG", "first"),
+        COUNTY=("COUNTY", "first"),
+        CITY=("CITY", "first"),
+        buffer_zone_id=("buffer_zone_id", "first"),
+    )
 
-    first_agg = buffed_parcels.groupby("APN20").first()[
-        [
-            "current_density_du_per_ac",
-            "Tier",
-            "ZN19_CITY",
-            "ZN19_SCAG",
-            "COUNTY",
-            "CITY",
-            "buffer_zone_id",
-        ]
-    ]
+    geom_agg = buffed_parcels[["APN20", "geometry"]].dissolve(by="APN20")["geometry"]
+
+    area_acres = agg["area_sqft_total"] / 43560
     weighted_density = np.where(
-        (area_agg > 0) & (first_agg["current_density_du_per_ac"].notna()), weighted_sum / area_agg, np.nan
+        (agg["area_sqft_total"] > 0) & (agg["current_density_du_per_ac"].notna()),
+        agg["area_x_density_sum"] / agg["area_sqft_total"],
+        np.nan,
     )
 
     by_apn = gpd.GeoDataFrame(
         {
-            "APN20": area_agg.index,
+            "APN20": agg.index,
             "geometry": geom_agg.values,
             "area_acres": area_acres.values,
             "new_density_du_per_ac": weighted_density,
             "new_dwelling_units": weighted_density * area_acres.values,
-            "current_dwelling_units": first_agg["current_density_du_per_ac"].values * area_acres.values,
-            "current_density_du_per_ac": first_agg["current_density_du_per_ac"].values,
-            "Tier": first_agg["Tier"].values,
-            "ZN19_CITY": first_agg["ZN19_CITY"].values,
-            "ZN19_SCAG": first_agg["ZN19_SCAG"].values,
-            "COUNTY": first_agg["COUNTY"].values,
-            "CITY": first_agg["CITY"].values,
-            "buffer_zone_id": first_agg["buffer_zone_id"].values,
+            "current_dwelling_units": agg["current_density_du_per_ac"].values * area_acres.values,
+            "current_density_du_per_ac": agg["current_density_du_per_ac"].values,
+            "Tier": agg["Tier"].values,
+            "ZN19_CITY": agg["ZN19_CITY"].values,
+            "ZN19_SCAG": agg["ZN19_SCAG"].values,
+            "COUNTY": agg["COUNTY"].values,
+            "CITY": agg["CITY"].values,
+            "buffer_zone_id": agg["buffer_zone_id"].values,
         },
         geometry="geometry",
         crs=buffed_parcels.crs,
