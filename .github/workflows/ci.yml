@@ -42,5 +42,5 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git push -f https://dom-dom:$HF_TOKEN@huggingface.co/spaces/missing-metro/sb79-map main
+          git push -f https://dom-dom:$HF_TOKEN@huggingface.co/spaces/missing-metro/notebooks main
         
