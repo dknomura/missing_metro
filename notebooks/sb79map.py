@@ -171,7 +171,7 @@ def _(file_input, page, page_size):
     start = page.value * page_size
     end = start + page_size
     mo.md("""Only showing a subset of 4000 parcels, use the slider above to see different parcel subsets.
-     Final calculations are done on all parcels. Grey parcels are ineligible for residential development.""")
+     Final calculations are done on all parcels.""")
     return end, start
 
 
@@ -185,13 +185,23 @@ def _(end, scag_parcels, start):
 def _(new_stops, scag_parcels):
     with mo.status.spinner(title="Calculating housing density...") as _spinner:
         scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
-        scag_with_dwelling_units = compute_dwelling_units(stops_gdf=new_stops, scag_density=scag_with_density)  # noqa: F841
+        scag_with_dwelling_units = compute_dwelling_units(stops_gdf=new_stops, scag_density=scag_with_density)
     return (scag_with_dwelling_units,)
 
 
 @app.cell
 def _(end, scag_with_dwelling_units, start):
     scag_with_dwelling_units[start:end].explore("buffer_zone_id", tiles="CartoDB positron")
+    return
+
+
+@app.cell
+def _(scag_with_dwelling_units):
+    mo.stop(scag_with_dwelling_units is None)
+    mo.md("""
+          1. Grey parcels are ineligible for residential development.
+          2. du_per_ac is dwelling units per acre.
+    """)
     return
 
 
@@ -220,12 +230,9 @@ def _(file_input, scag_with_dwelling_units):
     mo.md(f"""
     Total potential dwelling units for {file_input.name()}: {int(scag_with_dwelling_units["additional_du"].sum())}
 
-    Some SCAG zoning codes are non-specific and can represent a mix of residential, commercial, park, or institutional uses
-    and it is not always possible to determine from the data alone whether a parcel is a viable housing development site.
-    These parcels are included in the calculations and may inflate the overall estimates.
     Zoning is just one hurdle in the housing crisis and there are many other factors that determine
-    whether a parcel would be developed or not, but this gives a general idea of the potential for increased density
-    and dwelling units under SB 79.
+    whether a parcel would be developed or not, but this gives a general idea of the potential for
+    increased housing development under SB 79.
     """)
     return
 
@@ -240,7 +247,7 @@ def _():
 @app.cell(hide_code=True)
 def _(scag_with_dwelling_units, stops):
     mo.stop(scag_with_dwelling_units is None)
-    m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=5)
+    m = folium.Map(location=[35.6617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=6)
 
     VectorGridProtobuf(PARCEL_TILES_URL, "folium_layer_name").add_to(m)
     cluster = MarkerCluster(disable_clustering_at_zoom=10).add_to(m)
