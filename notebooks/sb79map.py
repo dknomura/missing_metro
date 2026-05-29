@@ -45,8 +45,8 @@ def _():
 
     ## Overview of SB 79
     SB 79, a California bill promoting transit-oriented development, goes into effect in July 2026. By increasing
-    allowable building heights and housing density within a half mile of qualifying transit stations, the law encourages
-    more housing development near transit to reduce car dependency, congestion, and vehicle miles traveled.
+    housing density within a half mile of qualifying transit stations, the law encourages
+    more development near transit to reduce car dependency, congestion, and vehicle miles traveled.
     The two tables below summarize the qualifying transit stations and the new zoning under SB 79.
 
     #### Table 1: Tier designations
@@ -97,11 +97,11 @@ def _():
 @app.cell
 def _(file_input):
     mo.stop(not file_input.value)
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp.write(file_input.value[0].contents)
-        tmp.flush()
-        print(tmp.name)
-        new_stops = assign_tier_to_stops_from_gtfs(tmp.name)
+    with mo.status.spinner(title=f"Loading {file_input.value[0].name}...") as _spinner:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp.write(file_input.value[0].contents)
+            tmp.flush()
+            new_stops = assign_tier_to_stops_from_gtfs(tmp.name)
     return (new_stops,)
 
 
@@ -171,8 +171,8 @@ def _(file_input, page, page_size):
     mo.stop(not file_input.value)
     start = page.value * page_size
     end = start + page_size
-    mo.md("""Only showing a subset of 4000 parcels, but can paginate through to see all parcels.
-     Calculations are done on all parcels. Grey parcels are ineligible for residential development.""")
+    mo.md("""Only showing a subset of 4000 parcels, use the slider above to see different parcel subsets.
+     Final calculations are done on all parcels. Grey parcels are ineligible for residential development.""")
     return end, start
 
 
@@ -184,7 +184,7 @@ def _(end, scag_parcels, start):
 
 @app.cell
 def _(new_stops, scag_parcels):
-    with mo.status.spinner(title="Calculating dwelling units...") as _spinner:
+    with mo.status.spinner(title="Calculating housing density...") as _spinner:
         scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
         scag_with_dwelling_units = compute_dwelling_units(stops_gdf=new_stops, scag_density=scag_with_density)  # noqa: F841
     return (scag_with_dwelling_units,)
