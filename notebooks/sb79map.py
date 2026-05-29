@@ -40,35 +40,45 @@ with app.setup(hide_code=True):
 @app.cell(hide_code=True)
 def _():
     mo.md("""
-    # SB-79 Analysis
-    [Code for this notebook.](https://github.com/dknomura/missing_metro/blob/main/notebooks/sb79map.py)
+    # SB 79 Analysis
+    [Code repository for this notebook.](https://github.com/dknomura/missing_metro/blob/main/notebooks/sb79map.py)
+
+    ## Overview of SB 79
+    SB 79, a California bill promoting transit-oriented development, goes into effect in July 2026. By increasing
+    allowable building heights and housing density within a half mile of qualifying transit stations, the law encourages
+    more housing development near transit to reduce car dependency, congestion, and vehicle miles traveled.
+    The two tables below summarize the qualifying transit stations and the new zoning under SB 79.
+
+    #### Table 1: Tier designations
+    | | | | |
+    |--------|----------------------|----|--------------------------------------------|
+    | Tier 1 | Heavy rail | or | Commuter rail with more than 72 trains/day |
+    | Tier 2 | Light rail/BRT | or | Commuter rail with more than 48 trains/day |
+
+    #### Table 2: Permitted Zoning Density (dwelling units / acre)
+    | | Within 200 ft of a station | Within ¼ mi of a station | Within ½ mi of a station |
+    |--------|------------------------------|---------------------------|---------------------------|
+    | Tier 1 | 160 | 120 | 100 |
+    | Tier 2 | 140 | 100 | 80 |
+
+    This notebook takes in a transit schedule zip file (GTFS format) and uses Southern California
+    Association of Governments (SCAG) zoning parcel data to calculate the density and dwelling units that are
+    currently permitted and compares it with the increase under SB 79.
 
     ## Instructions
     1. If you do not have a GTFS zip file, download one of the following for a demo
-        - [OC Streetcar GTFS](https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip)
-        - [LA Metro GTFS](https://gitlab.com/LACMTA/gtfs_rail/raw/master/gtfs_rail.zip) this will take 5-10 min
-    2. GTFS file needs to be for a transit system in the SCAG region (LA, Orange, Riverside, San Bernardino, Ventura).
-
-
-    ## Overview of SB-79 analysis
-    SB-79 is a California bill that promotes transit oriented development by allowing increased residential density
-    and reduced parking requirements within a half mile of qualifying transit stations.
-    The two tables below summarize the tier designations and the zoning allowances under SB-79.
-
-    | **Table 1: Tier designations** | | | |
-    |--------|----------------------|----|--------------------------------------------|
-    | Tier 1 | Heavy rail (subway) | or | Commuter rail with more than 72 trains/day |
-    | Tier 2 | Light rail | or | Commuter rail with more than 48 trains/day |
-
-    **Table 2: Permitted Zoning Based on Distance from Station (du/ac = dwelling units / acre)**
-
-    | | Within 200 feet of a station | Within ¼ mile of a station | Within ½ mile of a station |
-    |--------|------------------------------|---------------------------|---------------------------|
-    | Tier 1 | 9 stories (160 du/ac) | 7 stories (120 du/ac) | 6 stories (100 du/ac) |
-    | Tier 2 | 8 stories (140 du/ac) | 6 stories (100 du/ac) | 5 stories (80 du/ac) |
-
-    This notebook takes in a General Transit Feed Specification (GTFS) zip file and uses SCAG zoning parcel data to calculate
-    the density and dwelling units that are currently permitted and compares it with the potential under SB-79.
+        - [Mock OC Streetcar GTFS](https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/oc-streetcar_gtfs.zip).
+          For the OC Streetcar that is due to open in 2026. This is the fastest option, may take a few minutes to analyze
+        - [LA Metro GTFS](https://gitlab.com/LACMTA/gtfs_rail/raw/master/gtfs_rail.zip). For the current LA Metro system.
+          This will take ~5-10 min
+        - [Mock Pacific Electric Red Trolley Car GTFS](https://github.com/dknomura/missing_metro/raw/refs/heads/main/notebooks/public/mock_pacific_electric_gtfs.zip).
+          A what-if scenario where Los Angeles develops a similar level of transit infrastructure as it had in the 1920s
+          when it had the [largest electric railway system with the red trolley cars](https://en.wikipedia.org/wiki/Pacific_Electric).
+          Note: only main stations are included. This will take 5-10 min
+    2. ⚠️ The GTFS file must be from a transit system in the SCAG region
+        (LA, Orange, Riverside, San Bernardino, or Ventura County).
+    3. This notebook is hosted on a free tier service, so the first load may take a few minutes as the server warms up.
+    4. Once the notebook loads, there will be a button to upload the GTFS zip file.
     """)
     return
 
@@ -76,7 +86,7 @@ def _():
 @app.cell(hide_code=True)
 def _():
     file_input = mo.ui.file(
-        label="Select a GTFS zip file to initiate the SB-79 analysis",
+        label="Select a GTFS zip file to initiate the SB 79 analysis",
         filetypes=[".zip"],
     )
 
@@ -86,20 +96,27 @@ def _():
 
 @app.cell
 def _(file_input):
-    mo.stop(not file_input.value, mo.md("⬆️ Upload a GTFS zip to continue"))
-
+    mo.stop(not file_input.value)
     with tempfile.NamedTemporaryFile(delete=False) as tmp:
         tmp.write(file_input.value[0].contents)
         tmp.flush()
-
-        new_stops = assign_tier_to_stops_from_gtfs(tmp.name, tier_overrides={"route-mourbghe-3": 2})
+        print(tmp.name)
+        new_stops = assign_tier_to_stops_from_gtfs(tmp.name)
     return (new_stops,)
 
 
 @app.cell
 def _(new_stops):
-
     new_stops.explore("Tier", tiles="CartoDB positron", categorical=True)
+    return
+
+
+@app.cell
+def _(file_input):
+    mo.stop(not file_input.value)
+    mo.md("""
+    Half mile buffers around eligible stops
+    """)
     return
 
 
@@ -117,7 +134,7 @@ def _(new_stops):
 @app.cell(hide_code=True)
 def _(buffers):
 
-    with mo.status.spinner(title="Loading...") as _spinner:
+    with mo.status.spinner(title="Downloading SCAG parcels...") as _spinner:
         scag_parcels = fetch_from_arcgis(
             url=SCAG_PARCELS_URL,
             geometries=buffers.geometry.tolist(),
@@ -143,19 +160,19 @@ def _(file_input, scag_parcels):
         start=0,
         stop=len(scag_parcels) // page_size,
         step=1,
-        label="Page",
+        label="Parcel page",
     )
     page
     return page, page_size
 
 
 @app.cell
-def _(file_input, page, page_size, scag_parcels):
+def _(file_input, page, page_size):
     mo.stop(not file_input.value)
     start = page.value * page_size
     end = start + page_size
     mo.md("""Only showing a subset of 4000 parcels, but can paginate through to see all parcels.
-     Calculations are done on all parcels.""") if scag_parcels is not None else None
+     Calculations are done on all parcels. Grey parcels are ineligible for residential development.""")
     return end, start
 
 
@@ -165,15 +182,10 @@ def _(end, scag_parcels, start):
     return
 
 
-@app.cell(hide_code=True)
-def _(scag_parcels):
-    scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
-    return (scag_with_density,)
-
-
 @app.cell
-def _(new_stops, scag_with_density):
-    with mo.status.spinner(title="Loading...") as _spinner:
+def _(new_stops, scag_parcels):
+    with mo.status.spinner(title="Calculating dwelling units...") as _spinner:
+        scag_with_density = compute_scag_density(scag_parcels=scag_parcels)
         scag_with_dwelling_units = compute_dwelling_units(stops_gdf=new_stops, scag_density=scag_with_density)  # noqa: F841
     return (scag_with_dwelling_units,)
 
@@ -186,14 +198,14 @@ def _(end, scag_with_dwelling_units, start):
 
 @app.cell
 def _(end, scag_with_dwelling_units, start):
-    scag_with_dwelling_units[start:end].explore("new_density_du_per_ac", tiles="CartoDB positron")
+
+    scag_with_dwelling_units[start:end].explore("current_density_du_per_ac", tiles="CartoDB positron")
     return
 
 
 @app.cell
 def _(end, scag_with_dwelling_units, start):
-
-    scag_with_dwelling_units[start:end].explore("current_density_du_per_ac", tiles="CartoDB positron")
+    scag_with_dwelling_units[start:end].explore("new_density_du_per_ac", tiles="CartoDB positron")
     return
 
 
@@ -204,16 +216,18 @@ def _(end, scag_with_dwelling_units, start):
 
 
 @app.cell
-def _(file_input, scag_parcels, scag_with_dwelling_units):
+def _(file_input, scag_with_dwelling_units):
+    mo.stop(scag_with_dwelling_units is None)
     mo.md(f"""
     Total potential dwelling units for {file_input.name()}: {int(scag_with_dwelling_units["additional_du"].sum())}
 
-    SCAG has some unclassified, non-specific zoning categories that are parks, shopping centers, etc that likely would not
-    be developable. Also this does not take into account any recent construction that would similarly not have
-    further development. All current zoning is estimated from
-    [these SCAG designations](https://scag-spm-documentation.readthedocs.io/en/latest/scag_lu_codes_description/).
-    This is just an initial estimate at the potential dwelling units and areas for potential development.
-    """) if scag_parcels is not None else None
+    Some SCAG zoning codes are non-specific and can represent a mix of residential, commercial, park, or institutional uses
+    and it is not always possible to determine from the data alone whether a parcel is a viable housing development site.
+    These parcels are included in the calculations and may inflate the overall estimates.
+    Zoning is just one hurdle in the housing crisis and there are many other factors that determine
+    whether a parcel would be developed or not, but this gives a general idea of the potential for increased density
+    and dwelling units under SB 79.
+    """)
     return
 
 
@@ -225,12 +239,12 @@ def _():
 
 
 @app.cell(hide_code=True)
-def _(stops):
+def _(scag_with_dwelling_units, stops):
+    mo.stop(scag_with_dwelling_units is None)
     m = folium.Map(location=[34.0617140033952, -118.314146442073], tiles="CartoDB Positron", zoom_start=5)
 
     VectorGridProtobuf(PARCEL_TILES_URL, "folium_layer_name").add_to(m)
     cluster = MarkerCluster(disable_clustering_at_zoom=10).add_to(m)
-
     for _, _row in stops.iterrows():
         color = "blue" if _row["Tier"] == 2 else "red"
         cluster.add_child(
@@ -251,23 +265,20 @@ def _(stops):
                 fill_color=color,
             ).add_to(m)
         )
-    return (m,)
-
-
-@app.cell
-def _(m):
     m
     return
 
 
 @app.cell
-def _(scag_parcels):
+def _(scag_with_dwelling_units):
+    mo.stop(scag_with_dwelling_units is None)
     mo.md("""
-    The map above shows all elligible stations for SB-79 in California. Parcels are served as vector tiles and are visible
-    at higher zoom levels, but they do not contain any zoning information. Our analysis only covers the SCAG region
+    The map above shows the number and location of all eligible stations for SB 79 in California. Parcels are served
+    as vector tiles and are visible when you zoom into the individual stations,
+    but they do not contain any zoning information. Our analysis only covers the SCAG region
     (LA, Orange, Riverside, San Bernardino, Ventura counties), but the overall impact can be extrapolated to the
     other regions in California.
-    """) if scag_parcels is not None else None
+    """)
     return
 
 
