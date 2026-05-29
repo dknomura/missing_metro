@@ -11,6 +11,21 @@ from shared.api.gtfs import parent_stations_from_gtfs
 from shared.utils.constants import SCAG_FT_CRS, WGS84_GCS_CRS
 from shared.utils.geoprocessing import clip_to_buffer_rings
 
+_ZONE_DENSITIES = pd.Series(
+    {
+        ("200 ft", 1): 160,
+        ("200 ft", 2): 140,
+        ("1320 ft", 1): 120,
+        ("1320 ft", 2): 100,
+        ("2640 ft", 1): 100,
+        ("2640 ft", 2): 80,
+    }
+)
+
+_BUFFER_DISTANCES = [200, 1320, 2640]
+
+_KEEP_COLS = ["APN20", "current_density_du_per_ac", "ZN19_CITY", "ZN19_SCAG", "COUNTY", "CITY", "geometry"]
+
 
 def assign_tier_to_stops_from_gtfs(
     gtfs_path: str | Path,
@@ -177,22 +192,6 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     scag_parcels["current_density_du_per_ac"] = pd.to_numeric(scag_density, errors="coerce")
     return scag_parcels
-
-
-_ZONE_DENSITIES = pd.Series(
-    {
-        ("200 ft", 1): 160,
-        ("200 ft", 2): 140,
-        ("1320 ft", 1): 120,
-        ("1320 ft", 2): 100,
-        ("2640 ft", 1): 100,
-        ("2640 ft", 2): 80,
-    }
-)
-
-_BUFFER_DISTANCES = [200, 1320, 2640]
-
-_KEEP_COLS = ["APN20", "current_density_du_per_ac", "ZN19_CITY", "ZN19_SCAG", "COUNTY", "CITY", "geometry"]
 
 
 def compute_dwelling_units(
