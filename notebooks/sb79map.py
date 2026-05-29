@@ -77,7 +77,8 @@ def _():
           Note: only main stations are included. This will take 5-10 min
     2. ⚠️ The GTFS file must be from a transit system in the SCAG region
         (LA, Orange, Riverside, San Bernardino, or Ventura County).
-    3. This notebook is hosted on a free tier service, so the first load may take a few minutes as the server warms up.
+    3. This notebook is hosted on a free tier service, so the first load may take a few minutes as the server warms up and
+       the server may crash on bigger GTFS files.
     4. Once the notebook loads, there will be a button to upload the GTFS zip file.
     """)
     return
