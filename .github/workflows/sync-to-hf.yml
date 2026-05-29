@@ -1,8 +1,9 @@
 name: Sync to Hugging Face Spaces
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]  # must match the `name:` field in ci.yml exactly
     branches: [main]
-
+    types: [completed]
 jobs:
   sync:
     runs-on: ubuntu-latest
