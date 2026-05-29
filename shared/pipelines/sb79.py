@@ -126,7 +126,6 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         "2600": 0.2,
         "2700": 0.2,
         "1900": 0,
-        "7777": 0,
         "1500": 0,
         "1233": 0,
         "1210": 0,

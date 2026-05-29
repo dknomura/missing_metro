@@ -30,15 +30,16 @@ def clip_to_buffer_rings(
 
     features_reproj = features_gdf.to_crs(buffer_crs)
 
-    candidates = gpd.sjoin(features_reproj, attr_buffers[distances[-1]], how="inner", predicate="intersects").drop(
-        columns=["index_right"], errors="ignore"
-    )
-
-    clipped = {}
-    current = candidates
-    for dist in reversed(distances):
-        current = gpd.overlay(current, geom_buffers[dist], how="intersection")
-        clipped[dist] = current
+    clipped = {
+        dist: gpd.overlay(
+            gpd.sjoin(features_reproj, buf, how="inner", predicate="intersects").drop(
+                columns=["index_right"], errors="ignore"
+            ),
+            geom_buffers[dist],
+            how="intersection",
+        )
+        for dist, buf in attr_buffers.items()
+    }
 
     rings = []
     for outer, inner in ring_definitions:
