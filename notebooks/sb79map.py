@@ -41,8 +41,6 @@ with app.setup(hide_code=True):
 def _():
     mo.md("""
     # SB 79 Analysis
-    [Code repository for this notebook.](https://github.com/dknomura/missing_metro/blob/main/notebooks/sb79map.py)
-
     ## Overview of SB 79
     SB 79, a California bill promoting transit-oriented development, goes into effect in July 2026. By increasing
     housing density within a half mile of qualifying transit stations, the law encourages

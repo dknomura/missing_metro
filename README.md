@@ -1,3 +1,12 @@
+---
+title: Missing Metro
+emoji: 🗺️
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # Missing Metro Marimo
 ## Development
 
