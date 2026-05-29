@@ -22,30 +22,34 @@ def assign_tier_to_stops_from_gtfs(
     if result_df.empty:
         return _empty_result()
 
-    exploded = result_df[["stop_id", "route_types", "n_arrivals"]].explode(["route_types", "n_arrivals"])
-    train_arrivals = exploded[exploded["route_types"].astype(int).isin([0, 1, 2])].groupby("stop_id")["n_arrivals"].sum()
-    result_df["total_train_arrivals"] = result_df["stop_id"].map(train_arrivals).fillna(0)
+    exploded = (
+        result_df[["stop_id", "route_types", "n_arrivals"]]
+        .explode(["route_types", "n_arrivals"])
+        .assign(route_type_int=lambda df: df["route_types"].astype(int))
+    )
+    train = exploded[exploded["route_type_int"].isin([0, 1, 2])]
 
-    # --- Tier assignment (priority order: subway > high-freq rail > medium commuter > low light rail) ---
-    has_subway = result_df["route_types"].apply(lambda rts: "1" in rts)
-    has_commuter = result_df["route_types"].apply(lambda rts: "2" in rts)
-    has_light_rail = result_df["route_types"].apply(lambda rts: "0" in rts)
+    train_arrivals = train.groupby("stop_id")["n_arrivals"].sum()
+    type_sets = train.groupby("stop_id")["route_type_int"].agg(set)
+
+    result_df = result_df.assign(
+        total_train_arrivals=result_df["stop_id"].map(train_arrivals).fillna(0),
+        _types=result_df["stop_id"].map(type_sets).fillna("").apply(lambda s: s if isinstance(s, set) else set()),
+    )
+
     arrivals = result_df["total_train_arrivals"]
+    has_subway = result_df["_types"].map(lambda s: 1 in s)
+    has_commuter = result_df["_types"].map(lambda s: 2 in s)
+    has_light_rail = result_df["_types"].map(lambda s: 0 in s)
 
     result_df["Tier"] = pd.Series(pd.NA, index=result_df.index).case_when(
         [
             (has_subway, 1),
-            ((has_commuter) & (arrivals >= 72), 1),
-            ((has_commuter) & (arrivals >= 48), 2),
+            (has_commuter & (arrivals >= 72), 1),
+            (has_commuter & (arrivals >= 48), 2),
             (has_light_rail, 2),
         ]
     )
-
-    # --- Apply route-level overrides ---
-    if tier_overrides:
-        for rid, tier in tier_overrides.items():
-            mask = result_df["route_ids"].apply(lambda rids, rid=rid: rid in rids)
-            result_df.loc[mask, "Tier"] = tier
 
     result_df = result_df.dropna(subset=["Tier"]).assign(
         Tier=lambda df: df["Tier"].astype(int),
@@ -56,6 +60,10 @@ def assign_tier_to_stops_from_gtfs(
 
     if result_df.empty:
         return _empty_result()
+
+    if tier_overrides:
+        for rid, tier in tier_overrides.items():
+            result_df.loc[result_df["route_ids"].str.contains(rid, regex=False), "Tier"] = tier
 
     return gpd.GeoDataFrame(
         result_df,
@@ -80,8 +88,7 @@ def _empty_result() -> gpd.GeoDataFrame:
 
 
 def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
-    df = scag_parcels.copy()
-    is_la = df["CITY"] == "Los Angeles"
+    is_la = scag_parcels["CITY"] == "Los Angeles"
 
     SCAG_FIXED = {
         "1123": 18,
@@ -115,12 +122,12 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     }
     SCAG_AREA_BASED = {"1110": 1, "1111": 1, "1112": 1, "1113": 1, "1121": 3, "1122": 3, "1140": 3}
 
-    zn19_scag = df["ZN19_SCAG"].astype(str)
+    zn19_scag = scag_parcels["ZN19_SCAG"].astype(str)
     scag_density = zn19_scag.map(SCAG_FIXED)
 
     area_mask = zn19_scag.isin(SCAG_AREA_BASED)
     if area_mask.any():
-        area_acres = df.loc[area_mask].to_crs(SCAG_FT_CRS).area / 43560
+        area_acres = scag_parcels.loc[area_mask].to_crs(SCAG_FT_CRS).area / 43560
         area_acres = area_acres.replace(0, np.nan)
         scag_density.loc[area_mask] = zn19_scag[area_mask].map(SCAG_AREA_BASED) / area_acres
 
@@ -158,7 +165,7 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     ]
 
     if is_la.any():
-        la_zones = df.loc[is_la, "ZN19_CITY"]
+        la_zones = scag_parcels.loc[is_la, "ZN19_CITY"]
         la_density = pd.Series(np.nan, index=la_zones.index)
         for code, density in LA_ZONES:
             unmatched = la_density.isna()
@@ -168,18 +175,12 @@ def compute_scag_density(scag_parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             la_density.loc[mask] = density
         scag_density.loc[is_la] = la_density
 
-    df["current_density_du_per_ac"] = pd.to_numeric(scag_density, errors="coerce")
-    return df
+    scag_parcels["current_density_du_per_ac"] = pd.to_numeric(scag_density, errors="coerce")
+    return scag_parcels
 
 
-def compute_dwelling_units(
-    stops_gdf: gpd.GeoDataFrame,
-    scag_density: gpd.GeoDataFrame,
-) -> gpd.GeoDataFrame:
-    stops_trimmed = stops_gdf[["stop_id", "Tier", "geometry"]]
-    scag_clean = scag_density.drop(columns=["Tier"], errors="ignore")
-
-    zone_densities = {
+_ZONE_DENSITIES = pd.Series(
+    {
         ("200 ft", 1): 160,
         ("200 ft", 2): 140,
         ("1320 ft", 1): 120,
@@ -187,24 +188,36 @@ def compute_dwelling_units(
         ("2640 ft", 1): 100,
         ("2640 ft", 2): 80,
     }
-    buffer_distances = [200, 1320, 2640]
+)
+
+_BUFFER_DISTANCES = [200, 1320, 2640]
+
+_KEEP_COLS = ["APN20", "current_density_du_per_ac", "ZN19_CITY", "ZN19_SCAG", "COUNTY", "CITY", "geometry"]
+
+
+def compute_dwelling_units(
+    stops_gdf: gpd.GeoDataFrame,
+    scag_density: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    stops_trimmed = stops_gdf[["stop_id", "Tier", "geometry"]]
+
+    scag_clean = scag_density.drop(columns=["Tier"], errors="ignore")[[c for c in _KEEP_COLS if c in scag_density.columns]]
 
     rings = clip_to_buffer_rings(
         features_gdf=scag_clean,
         sources_gdf=stops_trimmed,
-        buffer_distances=buffer_distances,
+        buffer_distances=_BUFFER_DISTANCES,
         buffer_crs=SCAG_FT_CRS,
         donut_how="difference",
     )
 
-    for ring, distance in zip(rings, buffer_distances, strict=False):
+    for ring, distance in zip(rings, _BUFFER_DISTANCES, strict=False):
         ring["buffer_zone_id"] = f"{distance} ft"
 
     buffed_parcels = gpd.GeoDataFrame(pd.concat(rings, ignore_index=True))
+
     buffed_parcels["area_sqft"] = buffed_parcels.area
-    buffed_parcels["zone_density"] = buffed_parcels.set_index(["buffer_zone_id", "Tier"]).index.map(
-        pd.Series(zone_densities)
-    )
+    buffed_parcels["zone_density"] = buffed_parcels.set_index(["buffer_zone_id", "Tier"]).index.map(_ZONE_DENSITIES)
     buffed_parcels["area_x_density"] = buffed_parcels["area_sqft"] * buffed_parcels["zone_density"]
 
     agg = buffed_parcels.groupby("APN20").agg(
@@ -217,9 +230,8 @@ def compute_dwelling_units(
         COUNTY=("COUNTY", "first"),
         CITY=("CITY", "first"),
         buffer_zone_id=("buffer_zone_id", "first"),
+        geometry=("geometry", unary_union),
     )
-
-    geom_agg = buffed_parcels[["APN20", "geometry"]].dissolve(by="APN20")["geometry"]
 
     area_acres = agg["area_sqft_total"] / 43560
     weighted_density = np.where(
@@ -231,7 +243,7 @@ def compute_dwelling_units(
     by_apn = gpd.GeoDataFrame(
         {
             "APN20": agg.index,
-            "geometry": geom_agg.values,
+            "geometry": agg["geometry"].values,
             "area_acres": area_acres.values,
             "new_density_du_per_ac": weighted_density,
             "new_dwelling_units": weighted_density * area_acres.values,
@@ -247,6 +259,7 @@ def compute_dwelling_units(
         geometry="geometry",
         crs=buffed_parcels.crs,
     )
+
     by_apn["additional_du"] = np.maximum(
         0,
         by_apn.get("new_dwelling_units", 0) - by_apn.get("current_dwelling_units", 0),

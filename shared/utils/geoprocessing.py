@@ -14,23 +14,31 @@ def clip_to_buffer_rings(
 ) -> list[gpd.GeoDataFrame]:
     distances = sorted(buffer_distances)
     ring_definitions = [(dist, distances[i - 1] if i > 0 else None) for i, dist in enumerate(distances)]
-    sources_reprojected = sources_gdf.to_crs(buffer_crs).geometry
 
-    buffers = {
+    sources_reproj = sources_gdf.to_crs(buffer_crs)
+    source_geom = sources_reproj.geometry
+
+    attr_buffers = {
         dist: gpd.GeoDataFrame(
-            sources_gdf.drop(columns="geometry"),
-            geometry=sources_reprojected.buffer(dist),
+            sources_reproj.drop(columns="geometry"),
+            geometry=source_geom.buffer(dist),
             crs=buffer_crs,
         )
         for dist in distances
     }
+    geom_buffers = {dist: gpd.GeoDataFrame(geometry=source_geom.buffer(dist), crs=buffer_crs) for dist in distances}
 
     features_reproj = features_gdf.to_crs(buffer_crs)
 
-    largest = buffers[distances[-1]]
-    candidates = gpd.sjoin(features_reproj, largest, how="inner", predicate="intersects")
+    candidates = gpd.sjoin(features_reproj, attr_buffers[distances[-1]], how="inner", predicate="intersects").drop(
+        columns=["index_right"], errors="ignore"
+    )
 
-    clipped = {dist: gpd.overlay(candidates, buf[["geometry"]], how="intersection") for dist, buf in buffers.items()}
+    clipped = {}
+    current = candidates
+    for dist in reversed(distances):
+        current = gpd.overlay(current, geom_buffers[dist], how="intersection")
+        clipped[dist] = current
 
     rings = []
     for outer, inner in ring_definitions:
@@ -38,5 +46,5 @@ def clip_to_buffer_rings(
         if inner is None or outer_clip.empty:
             rings.append(outer_clip)
         else:
-            rings.append(gpd.overlay(outer_clip, buffers[inner][["geometry"]], how=donut_how))
+            rings.append(gpd.overlay(outer_clip, geom_buffers[inner], how=donut_how))
     return rings
