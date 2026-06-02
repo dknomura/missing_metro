@@ -7,14 +7,20 @@
 - Use `uv pip list` or `uv run pip list` to view installed packages 
 - The virtual environment is located at ./venv/
 
-# Windows Environment Rules
-- Most dev is done in Windows environment
-- WSL is available for any linux commands that need to be run
-
 # Pandas Lib Rules
 - Prefer vectorization over loops or .apply()
 - If you just want to see the schema and some of the data then use `pd.read_file(filename, rows=25)` to reduce the time to open a file
 
-# Marimo Framework Rules
-- Remember that the variables are tied to the cells, so you will need to change variable names if it is in a different cell. 
-- Use the notebook to read the dataframes so that they stay in memory to speed up troublshooting. Give me the option to run commands in the notebooks if you don't have access to the output. 
+## Agent skills
+
+### Issue tracker
+
+Issues live as GitHub issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default label vocabulary — five canonical roles mapped one-to-one. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
