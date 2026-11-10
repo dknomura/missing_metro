@@ -3,7 +3,13 @@ __marimo__
 test_output
 .ruff_cache/
 .vscode/
+
 data/
+
+
+!notebooks/lts_cv/data/
+!notebooks/lts_cv/data/**
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
