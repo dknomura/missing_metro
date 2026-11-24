@@ -5,10 +5,11 @@ test_output
 .vscode/
 
 data/
-
+.kilo/
 
 !notebooks/lts_cv/data/
 !notebooks/lts_cv/data/**
+notebooks/lts_cv/data/mapillary_coverage/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
